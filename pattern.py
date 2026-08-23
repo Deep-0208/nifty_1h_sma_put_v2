@@ -48,8 +48,7 @@ def detect_signal(completed_candles: List[Dict]) -> Optional[SetupSignal]:
     sma_50 = candle.get("sma_50")
 
     log_pattern.debug(
-        "Evaluating candle %s: O=%.2f H=%.2f L=%.2f C=%.2f | "
-        "SMA20=%s SMA50=%s",
+        "🔍 Evaluating 1H candle %s: O=%.2f H=%.2f L=%.2f C=%.2f | SMA20=%s SMA50=%s",
         candle_time, o, h, l, c,
         f"{sma_20:.2f}" if sma_20 is not None else "None",
         f"{sma_50:.2f}" if sma_50 is not None else "None",
@@ -58,35 +57,31 @@ def detect_signal(completed_candles: List[Dict]) -> Optional[SetupSignal]:
     # Guard: reject if SMA values are missing (warmup period)
     if sma_20 is None or sma_50 is None:
         log_pattern.debug(
-            "REJECTED: SMA warmup incomplete "
-            "(sma_20=%s, sma_50=%s)", sma_20, sma_50,
+            "❌ REJECTED: SMA warmup incomplete (sma_20=%s, sma_50=%s)", sma_20, sma_50,
         )
         return None
 
     # Guard: reject NaN
     if math.isnan(sma_20) or math.isnan(sma_50):
-        log_pattern.debug("REJECTED: SMA contains NaN.")
+        log_pattern.debug("❌ REJECTED: SMA contains NaN.")
         return None
 
     # Condition 1: Red candle
     is_red = c < o
     log_pattern.debug(
-        "  Condition 1 (Red candle): close=%.2f < open=%.2f -> %s",
-        c, o, is_red,
+        "  [1/3] Red candle check: close=%.2f < open=%.2f -> %s", c, o, is_red,
     )
 
     # Condition 2: Close below SMA 20
     below_sma20 = c < sma_20
     log_pattern.debug(
-        "  Condition 2 (Below SMA20): close=%.2f < sma_20=%.2f -> %s",
-        c, sma_20, below_sma20,
+        "  [2/3] Below SMA20 check: close=%.2f < sma_20=%.2f -> %s", c, sma_20, below_sma20,
     )
 
     # Condition 3: Close below SMA 50
     below_sma50 = c < sma_50
     log_pattern.debug(
-        "  Condition 3 (Below SMA50): close=%.2f < sma_50=%.2f -> %s",
-        c, sma_50, below_sma50,
+        "  [3/3] Below SMA50 check: close=%.2f < sma_50=%.2f -> %s", c, sma_50, below_sma50,
     )
 
     if is_red and below_sma20 and below_sma50:
@@ -98,16 +93,14 @@ def detect_signal(completed_candles: List[Dict]) -> Optional[SetupSignal]:
             spot_sl=h,  # Signal candle High = Spot SL
         )
         log_pattern.info(
-            "SIGNAL DETECTED on candle %s: "
-            "C=%.2f < SMA20=%.2f < SMA50=%.2f | "
-            "Spot SL (High)=%.2f",
+            "🎯 BEARISH BREAKDOWN SIGNAL DETECTED on 1H candle %s: "
+            "Close=%.2f < SMA20=%.2f & SMA50=%.2f | Spot SL (High)=%.2f",
             candle_time, c, sma_20, sma_50, h,
         )
         return signal
 
     log_pattern.debug(
-        "No signal on candle %s. "
-        "Conditions: red=%s, below_sma20=%s, below_sma50=%s",
+        "No signal on 1H candle %s (red=%s, below_sma20=%s, below_sma50=%s)",
         candle_time, is_red, below_sma20, below_sma50,
     )
     return None

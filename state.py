@@ -1,6 +1,5 @@
 """
 state.py - Atomic State Persistence & Crash Recovery
-Ported from nifty_4hr_reversal/state.py.
 Crash-safe JSON state with tempfile + os.replace().
 """
 
@@ -61,22 +60,18 @@ def fresh_position() -> Dict[str, Any]:
 
 
 def load_state() -> Dict[str, Any]:
-    """
-    Load state from disk.
-    If state file is missing or corrupt, return fresh_state().
-    If the date has changed, reset daily counters but preserve cumulative fields.
-    """
+    """Load state from disk."""
     defaults = fresh_state()
 
     if not STATE_FILE.exists():
-        log.info("No existing state file found. Starting fresh.")
+        log.info("📂 No existing state file found. Starting fresh.")
         return defaults
 
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             state = json.load(f)
     except (json.JSONDecodeError, IOError) as e:
-        log.warning(f"Corrupt state file, starting fresh: {e}")
+        log.warning("⚠️ Corrupt state file, starting fresh: %s", e)
         return defaults
 
     # Merge missing keys from defaults
@@ -87,58 +82,55 @@ def load_state() -> Dict[str, Any]:
     # Day rollover: reset daily counters
     if state.get("date") != today_ist().isoformat():
         log.info(
-            f"Date rollover: {state.get('date')} -> {today_ist().isoformat()}. "
-            f"Resetting daily counters."
+            "🌅 Date rollover: %s -> %s. Resetting daily counters.",
+            state.get('date'), today_ist().isoformat(),
         )
         state["date"] = today_ist().isoformat()
         state["trades_today"] = 0
         state["realized_pnl_today"] = 0.0
-        # Preserve: total_realized_pnl, cash, in_position, current_position
 
     return state
 
 
 def save_state(state: Dict[str, Any]) -> None:
-    """
-    Atomically save state to disk.
-    Write to temp file first, then os.replace() for crash safety.
-    """
+    """Atomic write: write to temp file then rename."""
     STATE_DIR.mkdir(exist_ok=True)
-
+    tmp_path = None
     try:
-        fd, tmp_path = tempfile.mkstemp(
-            dir=str(STATE_DIR), suffix=".tmp", prefix="state_"
-        )
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2, default=str)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=str(STATE_DIR),
+            delete=False,
+            encoding="utf-8",
+            suffix=".tmp",
+        ) as f:
+            json.dump(state, f, indent=2)
+            tmp_path = f.name
 
         os.replace(tmp_path, str(STATE_FILE))
-
     except Exception as e:
-        log.error(f"CRITICAL: Failed to save state: {e}")
-        # Try to clean up temp file
-        try:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-        except Exception:
-            pass
-        raise
+        log.error("❌ Failed to save state atomically: %s", e)
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
-def append_trade_journal(row: Dict[str, Any]) -> None:
-    """
-    Append a trade record to the persistent journal CSV.
-    Creates the file with headers if it doesn't exist.
-    """
+def append_trade_journal(record: Dict[str, Any]) -> None:
+    """Append completed trade to logs/journal.csv."""
     LOG_DIR.mkdir(exist_ok=True)
-
-    file_exists = JOURNAL_FILE.exists()
+    write_header = not JOURNAL_FILE.exists() or JOURNAL_FILE.stat().st_size == 0
 
     try:
         with open(JOURNAL_FILE, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=JOURNAL_HEADERS)
-            if not file_exists:
+            if write_header:
                 writer.writeheader()
-            writer.writerow(row)
+            writer.writerow({k: record.get(k, "") for k in JOURNAL_HEADERS})
+        log.info(
+            "📖 Trade appended to journal: %s | P&L: ₹%+.2f",
+            record.get("tradingsymbol", "?"), record.get("gross_pnl", 0.0),
+        )
     except Exception as e:
-        log.error(f"Failed to append to trade journal: {e}")
+        log.error("❌ Failed to write trade journal: %s", e)

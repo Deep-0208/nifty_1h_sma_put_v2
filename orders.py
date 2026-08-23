@@ -38,11 +38,6 @@ class OrderManager:
     ) -> bool:
         """
         Place a BUY MARKET order for the ATM PUT.
-
-        PAPER: simulates fill at entry_premium.
-        LIVE:  places order via kite, confirms fill, uses average_price.
-
-        Returns True if entry was successful, False otherwise.
         """
         mode = CONFIG["trading_mode"]
         qty = self.data_mgr._instrument_mgr.lot_size * CONFIG["num_lots"] \
@@ -54,8 +49,8 @@ class OrderManager:
         expiry = option_info["expiry"]
 
         log_orders.info(
-            "ENTRY ATTEMPT [%s]: %s | qty=%d | entry_premium=%.2f | "
-            "entry_spot=%.2f | spot_sl=%.2f | spot_target=%.2f",
+            "🚀 ENTRY ATTEMPT [%s]: %s | Qty: %d | Premium: ₹%.2f | "
+            "Spot: %.2f | SL: %.2f | Target: %.2f",
             mode, symbol, qty, entry_premium,
             entry_spot, risk_params.spot_sl, risk_params.spot_target,
         )
@@ -76,18 +71,17 @@ class OrderManager:
                 )
                 log_orders.info("BUY order placed: order_id=%s", order_id)
 
-                # Broker-state-driven confirmation (D10/FIX3)
                 actual_entry_premium = self._confirm_order_fill(
                     order_id, symbol, entry_premium, timeout_s=10
                 )
 
             except Exception as e:
-                log_orders.error("BUY order FAILED for %s: %s", symbol, e)
+                log_orders.error("❌ BUY order FAILED for %s: %s", symbol, e)
                 tg.setup_skipped(f"BUY_ORDER_FAILED: {e}", mode)
                 return False
         else:
             order_id = f"PAPER_{int(time.time())}"
-            log_orders.info("PAPER BUY: %s @ %.2f", symbol, entry_premium)
+            log_orders.info("✅ PAPER BUY FILLED: %s @ ₹%.2f", symbol, entry_premium)
 
         # Update state
         self.state["in_position"] = True
@@ -129,8 +123,8 @@ class OrderManager:
             )
 
         log_trades.info(
-            "ENTRY: %s | qty=%d | premium=%.2f | spot=%.2f | "
-            "SL=%.2f | target=%.2f | mode=%s",
+            "🟢 ENTRY: %s | Qty: %d | Premium: ₹%.2f | Spot: %.2f | "
+            "SL: %.2f | Target: %.2f | Mode: %s",
             symbol, qty, actual_entry_premium, entry_spot,
             risk_params.spot_sl, risk_params.spot_target, mode,
         )
@@ -146,13 +140,6 @@ class OrderManager:
     ) -> Optional[str]:
         """
         Check if Spot LTP triggers SL or Target.
-
-        Returns:
-            "STOP_LOSS"   if spot_ltp >= spot_sl
-            "TARGET_HIT"  if spot_ltp <= spot_target
-            None          if no exit triggered
-
-        SL has priority if both conditions are somehow true.
         """
         if not self.state.get("in_position") or not self.state.get("current_position"):
             return None
@@ -164,14 +151,14 @@ class OrderManager:
         # SL check (priority over target)
         if spot_ltp >= spot_sl:
             log_orders.info(
-                "SPOT SL HIT: ltp=%.2f >= sl=%.2f", spot_ltp, spot_sl
+                "🛑 SPOT SL HIT: Spot LTP %.2f >= SL %.2f", spot_ltp, spot_sl
             )
             return "STOP_LOSS"
 
         # Target check
         if spot_ltp <= spot_target:
             log_orders.info(
-                "SPOT TARGET HIT: ltp=%.2f <= target=%.2f",
+                "🎯 SPOT TARGET HIT: Spot LTP %.2f <= Target %.2f",
                 spot_ltp, spot_target,
             )
             return "TARGET_HIT"
@@ -181,12 +168,6 @@ class OrderManager:
     def exit_trade(self, reason: str, exit_premium: Optional[float] = None) -> bool:
         """
         Exit the current PUT position.
-
-        Uses thread lock to prevent duplicate exits.
-        Atomic double-exit guard: immediately sets in_position = False.
-
-        LIVE: Places SELL MARKET order, confirms fill.
-        PAPER: Uses exit_premium or fetches current option LTP.
         """
         with self._exit_lock:
             if self._exit_fired:
@@ -209,7 +190,7 @@ class OrderManager:
         mode = CONFIG["trading_mode"]
 
         log_orders.info(
-            "EXIT ATTEMPT [%s]: %s | qty=%d | reason=%s",
+            "🚪 EXIT ATTEMPT [%s]: %s | Qty: %d | Reason: %s",
             mode, symbol, qty, reason,
         )
 
@@ -238,8 +219,7 @@ class OrderManager:
                 )
             except Exception as e:
                 log_orders.error(
-                    "SELL order FAILED for %s: %s. "
-                    "Restoring in_position=True for retry.", symbol, e,
+                    "❌ SELL order FAILED for %s: %s. Restoring state.", symbol, e,
                 )
                 self.state["in_position"] = True
                 self._exit_fired = False
@@ -252,13 +232,13 @@ class OrderManager:
             if actual_exit_premium is None:
                 actual_exit_premium = self.data_mgr.fetch_option_ltp(symbol)
                 if actual_exit_premium is None:
-                    actual_exit_premium = entry_premium * 0.8  # fallback estimate
+                    actual_exit_premium = entry_premium * 0.8
                     log_orders.warning(
-                        "Could not fetch exit LTP for %s, using estimate %.2f",
+                        "⚠️ Could not fetch exit LTP for %s, using estimate %.2f",
                         symbol, actual_exit_premium,
                     )
             log_orders.info(
-                "PAPER SELL: %s @ %.2f", symbol, actual_exit_premium
+                "✅ PAPER SELL FILLED: %s @ ₹%.2f", symbol, actual_exit_premium
             )
 
         # P&L from actual option premiums (not Spot points)
@@ -285,10 +265,10 @@ class OrderManager:
             )
 
         log_trades.info(
-            "EXIT [%s]: %s | entry=%.2f | exit=%.2f | qty=%d | "
-            "P&L=%.2f | reason=%s | mode=%s",
+            "🏁 EXIT [%s]: %s | Entry: ₹%.2f | Exit: ₹%.2f | Qty: %d | "
+            "P&L: ₹%+.2f | Mode: %s",
             reason, symbol, entry_premium, actual_exit_premium, qty,
-            gross_pnl, reason, mode,
+            gross_pnl, mode,
         )
 
         # Journal
@@ -335,8 +315,6 @@ class OrderManager:
     ) -> float:
         """
         Broker-state-driven order confirmation (FIX3).
-        Polls kite.order_history() to get actual fill price.
-        Never blindly retries — always queries broker state first.
         """
         deadline = time.time() + timeout_s
         while time.time() < deadline:
@@ -352,21 +330,21 @@ class OrderManager:
                 if status == "COMPLETE":
                     avg_price = latest.get("average_price", fallback_price)
                     log_orders.info(
-                        "Order %s COMPLETE: avg_price=%.2f", order_id, avg_price
+                        "✅ Order %s COMPLETE: avg_price=%.2f", order_id, avg_price
                     )
                     return avg_price
 
                 elif status == "REJECTED":
                     reason = latest.get("status_message", "Unknown")
                     log_orders.error(
-                        "Order %s REJECTED: %s", order_id, reason
+                        "❌ Order %s REJECTED: %s", order_id, reason
                     )
                     raise RuntimeError(
                         f"Order {order_id} REJECTED: {reason}"
                     )
 
                 elif status in ("CANCELLED", "CANCEL PENDING"):
-                    log_orders.error("Order %s CANCELLED", order_id)
+                    log_orders.error("❌ Order %s CANCELLED", order_id)
                     raise RuntimeError(f"Order {order_id} CANCELLED")
 
                 else:
@@ -388,10 +366,7 @@ class OrderManager:
         return fallback_price
 
     def query_broker_position(self, symbol: str) -> Optional[Dict]:
-        """
-        Query broker for actual position state.
-        Used in crash recovery to reconcile local state vs broker.
-        """
+        """Query broker for actual position state."""
         try:
             time.sleep(random.uniform(0.1, 0.4))
             positions = self.kite.positions()
@@ -401,7 +376,7 @@ class OrderManager:
             for pos in day_positions + net_positions:
                 if pos.get("tradingsymbol") == symbol and pos.get("quantity", 0) != 0:
                     log_orders.info(
-                        "Broker position found: %s qty=%d",
+                        "✅ Broker position found: %s Qty: %d",
                         symbol, pos["quantity"],
                     )
                     return pos
