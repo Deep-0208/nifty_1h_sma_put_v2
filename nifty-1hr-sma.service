@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=azureuser
-WorkingDirectory=/home/azureuser/algos/nifty_1hr_sma_put
-ExecStart=/home/azureuser/algos/nifty_1hr_sma_put/venv/bin/python /home/azureuser/algos/nifty_1hr_sma_put/launcher.py
+WorkingDirectory=/home/azureuser/projects/nifty_1hr_sma_put
+ExecStart=/home/azureuser/projects/nifty_1hr_sma_put/venv/bin/python /home/azureuser/projects/nifty_1hr_sma_put/launcher.py
 Restart=always
 RestartSec=10
 KillMode=mixed
