@@ -1,6 +1,6 @@
-﻿"""
+"""
 config.py - NIFTY 1-Hour SMA PUT Strategy
-All strategy parameters and logging setup.
+All strategy parameters and multi-channel logging setup.
 No strategy logic lives here.
 """
 
@@ -98,7 +98,21 @@ CONFIG = {
 }
 
 
-# -- LOGGING SETUP --
+# ═══════════════════════════════════════════════
+# LOGGING SETUP — Multi-channel strategy logging
+# ═══════════════════════════════════════════════
+#
+# Daily directory: logs/YYYY-MM-DD/
+#   strategy.log  — Main strategy flow (INFO+)
+#   debug.log     — Full debug trace (DEBUG+)
+#   trades.log    — Entries, exits, P&L only
+#   candles.csv   — Closed 1H bars with SMA20/50 & pattern flags
+#   network.log   — Network, HTTP & WebSocket logs
+#
+# Persistent cross-day ledger:
+#   logs/journal.csv
+# ═══════════════════════════════════════════════
+
 LOGGER_NAME = "Nifty1HrSMA"
 
 
@@ -137,7 +151,7 @@ def setup_logging() -> logging.Logger:
 
     today = today_ist().isoformat()
 
-    # Console handler
+    # 1. Console handler
     ch = logging.StreamHandler()
     ch.setLevel(getattr(logging, CONFIG["log_level"], logging.INFO))
     ch.setFormatter(_make_formatter(include_module=False))
@@ -146,13 +160,13 @@ def setup_logging() -> logging.Logger:
     daily_log_dir = LOG_DIR / today
     daily_log_dir.mkdir(exist_ok=True)
 
-    # Main strategy log (INFO+)
+    # 2. Main strategy log (INFO+)
     _add_file_handler(root_logger, "strategy.log", daily_log_dir, level=logging.INFO, include_module=True)
 
-    # Full debug log (DEBUG+)
+    # 3. Full debug log (DEBUG+)
     _add_file_handler(root_logger, "debug.log", daily_log_dir, level=logging.DEBUG, include_module=True)
 
-    # Trade-only log
+    # 4. Trade-only log
     class TradeFilter(logging.Filter):
         def filter(self, record):
             return record.name == f"{LOGGER_NAME}.trades"
@@ -169,7 +183,26 @@ def setup_logging() -> logging.Logger:
     trades_fh.addFilter(TradeFilter())
     trades_logger.addHandler(trades_fh)
 
-    # Network log (isolate 3rd-party HTTP/WS noise)
+    # 5. Dedicated Candle CSV log
+    candles_logger = logging.getLogger(f"{LOGGER_NAME}.candles")
+    candles_fh = logging.FileHandler(
+        daily_log_dir / "candles.csv",
+        mode="a",
+        encoding="utf-8",
+    )
+    candles_fh.setLevel(logging.INFO)
+    candles_fh.setFormatter(logging.Formatter("%(message)s"))
+    candles_logger.addHandler(candles_fh)
+    candles_logger.propagate = False
+
+    # Write CSV header if file is new/empty
+    candles_csv = daily_log_dir / "candles.csv"
+    if not candles_csv.exists() or candles_csv.stat().st_size == 0:
+        candles_logger.info(
+            "timestamp,type,symbol,open,high,low,close,sma_20,sma_50,is_red,below_sma20,below_sma50"
+        )
+
+    # 6. Network log (isolate 3rd-party HTTP/WS noise)
     network_logger = logging.getLogger(f"{LOGGER_NAME}.network")
     _add_file_handler(network_logger, "network.log", daily_log_dir, level=logging.DEBUG, include_module=True)
     network_logger.propagate = False

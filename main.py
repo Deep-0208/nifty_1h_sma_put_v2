@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 
 from kiteconnect import KiteTicker
 
-from config import CONFIG, IST, now_ist, today_ist, log, log_data, log_orders
+from config import CONFIG, IST, now_ist, today_ist, log, log_data, log_orders, log_trades, log_candles
 from login import create_kite_session, LoginError
 from data import DataManager, InstrumentManager
 from pattern import detect_signal
@@ -530,6 +530,19 @@ def main():
                 if latest_candle.get("sma_20") is not None else "N/A",
                 f"{latest_candle.get('sma_50', 'N/A'):.2f}"
                 if latest_candle.get("sma_50") is not None else "N/A",
+            )
+
+            # Record raw candle to candles.csv
+            is_red = latest_candle["close"] < latest_candle["open"]
+            s20 = latest_candle.get("sma_20")
+            s50 = latest_candle.get("sma_50")
+            below_s20 = s20 is not None and latest_candle["close"] < s20
+            below_s50 = s50 is not None and latest_candle["close"] < s50
+            log_candles.info(
+                f"{candle_time},1H,NIFTY,{latest_candle['open']:.2f},{latest_candle['high']:.2f},"
+                f"{latest_candle['low']:.2f},{latest_candle['close']:.2f},"
+                f"{round(s20, 2) if s20 is not None else ''},{round(s50, 2) if s50 is not None else ''},"
+                f"{is_red},{below_s20},{below_s50}"
             )
 
             data_mgr.mark_candle_processed(candle_time)
