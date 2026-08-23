@@ -234,7 +234,7 @@ class InstrumentManager:
         Fetch NFO instruments, filter NIFTY PEs, verify lot size.
         Fails loudly if lot size doesn't match config.
         """
-        log.info("Loading NFO instruments...")
+        log.info("📥 Loading NFO instruments from Kite Connect...")
         time.sleep(random.uniform(0.1, 0.4))
         self._instruments = self.kite.instruments("NFO")
 
@@ -245,7 +245,7 @@ class InstrumentManager:
             and i.get("instrument_type") == "PE"
             and i.get("segment") == "NFO-OPT"
         ]
-        log.info("Found %d NIFTY PE contracts in NFO.", len(self._nifty_puts))
+        log.info("✅ Loaded %s NIFTY PE option instruments.", f"{len(self._nifty_puts):,}")
 
         if not self._nifty_puts:
             raise RuntimeError("No NIFTY PE contracts found in NFO instruments!")

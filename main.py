@@ -37,18 +37,18 @@ trade_lock = threading.Lock()
 def _banner():
     """Print startup banner."""
     mode = CONFIG["trading_mode"]
-    log.info("=" * 60)
-    log.info("  NIFTY 1-Hour SMA PUT Strategy")
-    log.info("  Mode: %s", mode)
-    log.info("  Product: %s", CONFIG["product"])
-    log.info("  Timeframe: %s", CONFIG["candle_tf"])
-    log.info("  SMA: %d / %d", CONFIG["sma_short"], CONFIG["sma_long"])
-    log.info("  Strike Step: %d", CONFIG["strike_step"])
+    mode_str = "📝 PAPER TRADING" if mode == "PAPER" else "🔴 LIVE TRADING"
+    log.info("=" * 65)
+    log.info("  NIFTY 1-HOUR SMA PUT STRATEGY")
+    log.info("  MODE: %s", mode_str)
+    log.info("  TF: %s | Lots: %d | Lot Size: %d", CONFIG["candle_tf"], CONFIG["num_lots"], CONFIG["lot_size_default"])
+    log.info("  SMA Short: %d | SMA Long: %d", CONFIG["sma_short"], CONFIG["sma_long"])
+    log.info("  ATM step: %dpt | R:R: 1:1.0 (Spot)", CONFIG["strike_step"])
     log.info("  Expiry: %s (0DTE allowed)", CONFIG["expiry_preference"])
-    log.info("  First Entry: %s", CONFIG["first_entry"])
-    log.info("  Last Entry: %s", CONFIG["last_entry"])
-    log.info("  Square-off: %s", CONFIG["square_off_time"])
-    log.info("=" * 60)
+    log.info("  Entry window: %s – %s", CONFIG["first_entry"], CONFIG["last_entry"])
+    log.info("  Force exit: %s", CONFIG["square_off_time"])
+    log.info("  Product: %s (Intraday)", CONFIG["product"])
+    log.info("=" * 65)
 
 
 def _is_market_hours() -> bool:
@@ -304,17 +304,20 @@ def main():
     try:
         kite = create_kite_session()
     except LoginError as e:
-        log.error("Authentication failed: %s", e)
+        log.error("❌ Authentication failed: %s", e)
         tg.bot_crashed(f"LOGIN_FAILED: {e}")
         sys.exit(1)
 
+    user_name = "User"
     user_id = ""
     try:
         profile = kite.profile()
+        user_name = profile.get("user_name", "User")
         user_id = profile.get("user_id", "")
     except Exception:
         pass
 
+    log.info("✅ Authenticated as: %s (%s)", user_name, user_id)
     tg.bot_started(mode)
     tg.login_success(user_id)
 
@@ -323,7 +326,7 @@ def main():
     try:
         instrument_mgr.load_instruments()
     except RuntimeError as e:
-        log.error("Instrument loading failed: %s", e)
+        log.error("❌ Instrument loading failed: %s", e)
         tg.bot_crashed(f"INSTRUMENTS_FAILED: {e}")
         sys.exit(1)
 
@@ -331,34 +334,59 @@ def main():
     data_mgr = DataManager(kite)
     data_mgr._instrument_mgr = instrument_mgr  # Cross-reference for lot_size
 
-    # 4. Prefetch candle data
-    log.info("Prefetching Spot 1H candles for SMA warmup...")
-    candles = data_mgr.fetch_spot_candles()
-    completed = data_mgr.get_completed_candles()
-    log.info(
-        "Data ready: %d total candles, %d completed.",
-        len(candles), len(completed),
-    )
-
-    # 5. Load state
+    # 4. Load state
     state = load_state()
     if state.get("cash", 0) == 0 and not state.get("in_position"):
         state["cash"] = CONFIG["starting_capital"]
         save_state(state)
 
-    # 6. Initialize Validation Analytics Engine
+    cash = state.get("cash", CONFIG["starting_capital"])
+    pnl_today = state.get("realized_pnl_today", 0.0)
+    total_pnl = state.get("total_realized_pnl", 0.0)
+    log.info(
+        "📂 State loaded — Cash: ₹%s | Realized Today: ₹%s | Total P&L: ₹%s",
+        f"{cash:,.2f}", f"{pnl_today:,.2f}", f"{total_pnl:,.2f}"
+    )
+
+    # 5. Initialize Validation Analytics Engine
     analytics = None
     if AnalyticsEngine is not None:
         try:
-            analytics = AnalyticsEngine(
-                today_ist(), state.get("cash", CONFIG["starting_capital"]),
-            )
-            log.info("Validation Analytics Engine initialized.")
+            analytics = AnalyticsEngine(today_ist(), cash)
+            log.info("✅ Validation engine initialized.")
         except Exception as e:
-            log.warning("Validation Analytics Engine failed to init: %s", e)
+            log.warning("⚠️ Validation engine failed to init: %s", e)
 
-    # 7. Initialize order manager
+    # 6. Initialize order manager
     order_mgr = OrderManager(kite, state, data_mgr, analytics=analytics)
+
+    # 7. Run startup pre-flight checks
+    log.info("🔍 Running startup checks...")
+    candles = data_mgr.fetch_spot_candles()
+    completed = data_mgr.get_completed_candles()
+    log.info(
+        "  ✓ Spot 1H candles: loaded %d total (%d completed for SMA warmup)",
+        len(candles), len(completed),
+    )
+
+    spot_ltp = data_mgr.fetch_spot_ltp()
+    if spot_ltp is not None:
+        log.info("  ✓ Spot LTP: ₹%s", f"{spot_ltp:,.2f}")
+        atm_strike = get_atm_strike(spot_ltp)
+        log.info("  ✓ ATM Strike: %d PE", atm_strike)
+        atm_put = instrument_mgr.get_atm_put(atm_strike)
+        if atm_put:
+            log.info("  ✓ Target Contract: %s (Expiry: %s)", atm_put["tradingsymbol"], atm_put["expiry"])
+
+    if completed:
+        last_c = completed[-1]
+        s20 = last_c.get("sma_20")
+        s50 = last_c.get("sma_50")
+        if s20 is not None and s50 is not None:
+            log.info("  ✓ SMA 20: %.2f | SMA 50: %.2f", s20, s50)
+
+    log.info("=" * 65)
+    log.info("  🟢 All checks passed. Strategy running...")
 
     # 8. Crash recovery
     _crash_recovery(state, kite, data_mgr, order_mgr)
