@@ -1,0 +1,20 @@
+[Unit]
+Description=NIFTY 1-Hour SMA PUT Strategy 24/7 Launcher
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=azureuser
+WorkingDirectory=/home/azureuser/algos/nifty_1hr_sma_put
+ExecStart=/home/azureuser/algos/nifty_1hr_sma_put/venv/bin/python /home/azureuser/algos/nifty_1hr_sma_put/launcher.py
+Restart=always
+RestartSec=10
+KillMode=mixed
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+# -- Environment & Secrets (NEVER COMMIT) --
+.env
+.env.*
+*.pem
+*.key
+
+# -- Runtime directories --
+state/
+logs/
+validation/data/
+validation/logs/
+
+# -- Python --
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# -- IDE & OS --
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
