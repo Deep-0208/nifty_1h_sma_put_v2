@@ -245,8 +245,18 @@ def _execute_entry(
             )
         return False
 
-    # 6. Fetch option premium for entry
-    entry_premium = data_mgr.fetch_option_ltp(option_info["tradingsymbol"])
+    # 6. Fetch option premium for entry (with multi-attempt verification)
+    entry_premium = None
+    for attempt in range(1, 4):
+        entry_premium = data_mgr.fetch_option_ltp(option_info["tradingsymbol"])
+        if entry_premium is not None and entry_premium > 0:
+            break
+        log.warning(
+            "Option premium unavailable on entry attempt %d/3 for %s. Retrying...",
+            attempt, option_info["tradingsymbol"],
+        )
+        time.sleep(0.5)
+
     if entry_premium is None or entry_premium <= 0:
         reason = f"OPTION_LTP_UNAVAILABLE: {option_info['tradingsymbol']}"
         log.warning("Entry skipped: %s", reason)
@@ -611,9 +621,6 @@ def main():
                 continue
 
             # Signal found!
-            state["last_signal_candle_time"] = candle_time_str
-            save_state(state)
-
             tg.signal_detected(
                 candle_time, signal.signal_candle["close"],
                 signal.sma_20, signal.sma_50, signal.spot_sl,
@@ -624,6 +631,9 @@ def main():
                 _execute_entry(
                     signal, kite, data_mgr, instrument_mgr, order_mgr, state, analytics=analytics,
                 )
+
+            state["last_signal_candle_time"] = candle_time_str
+            save_state(state)
 
             _smart_sleep(state.get("in_position", False))
 

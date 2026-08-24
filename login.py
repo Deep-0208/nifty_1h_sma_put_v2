@@ -168,7 +168,7 @@ def perform_auto_login() -> str:
 
             # 5. Generate Access Token
             log.info("🔄 Generating Access Token from KiteConnect...")
-            kite = KiteConnect(api_key=api_key, timeout=25)
+            kite = KiteConnect(api_key=api_key, timeout=10)
             data = kite.generate_session(request_token, api_secret=api_secret)
             access_token = data["access_token"]
 
@@ -208,7 +208,7 @@ def create_kite_session() -> KiteConnect:
     if not api_key:
         raise LoginError("API_KEY not found in .env. Cannot proceed.")
 
-    kite = KiteConnect(api_key=api_key, timeout=25)
+    kite = KiteConnect(api_key=api_key, timeout=10)
 
     def on_session_expiry():
         log.warning("⚠️ Kite session expired mid-day! Attempting auto-re-login...")

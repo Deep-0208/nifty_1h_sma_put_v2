@@ -15,6 +15,8 @@ import shutil
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 
+from config import today_ist, now_ist
+
 # ── Test framework ──
 _passed = 0
 _failed = 0
@@ -675,14 +677,14 @@ def test_state_atomic_save_load():
         state_mod.STATE_FILE = state_file
 
         test_state = {
-            "date": "2026-08-23",
+            "date": today_ist().isoformat(),
             "trades_today": 3,
             "in_position": True,
             "current_position": {"tradingsymbol": "NIFTY26AUG24500PE"},
             "realized_pnl_today": -500.0,
             "total_realized_pnl": 1200.0,
             "cash": 101200.0,
-            "last_signal_candle_time": "2026-08-23 10:15:00",
+            "last_signal_candle_time": f"{today_ist().isoformat()} 10:15:00",
         }
 
         state_mod.save_state(test_state)
@@ -803,6 +805,61 @@ def test_ws_fresh_ltp():
     _test("Fresh LTP -> 24500", result == 24500.0, f"got {result}")
 
 
+def test_fetch_option_ltp_retry_and_fallback():
+    """T43: fetch_option_ltp handles transient timeouts with retries and fallback to quote."""
+    from data import DataManager
+
+    class FlakyKite:
+        def __init__(self):
+            self.ltp_calls = 0
+            self.quote_calls = 0
+
+        def ltp(self, keys):
+            self.ltp_calls += 1
+            if self.ltp_calls == 1:
+                raise TimeoutError("Read timed out")
+            return {keys[0]: {"last_price": 65.5}}
+
+        def quote(self, keys):
+            self.quote_calls += 1
+            if self.ltp_calls == 1:
+                raise TimeoutError("Quote also timed out")
+            return {keys[0]: {"last_price": 65.5}}
+
+    dm = DataManager(FlakyKite())
+    val = dm.fetch_option_ltp("NIFTY26AUG24200PE")
+    _test("Option LTP retry on timeout succeeds", val == 65.5, f"got {val}")
+    _test("Option LTP retried on subsequent attempt", dm.kite.ltp_calls >= 2)
+
+    # Test quote fallback
+    class TimeoutKite:
+        def ltp(self, keys):
+            raise TimeoutError("All LTP timed out")
+
+        def quote(self, keys):
+            return {keys[0]: {"last_price": 72.0}}
+
+    dm2 = DataManager(TimeoutKite())
+    val2 = dm2.fetch_option_ltp("NIFTY26AUG24200PE")
+    _test("Option LTP falls back to quote() on complete LTP failure", val2 == 72.0, f"got {val2}")
+
+
+def test_fetch_spot_ltp_retry_and_fallback():
+    """T44: fetch_spot_ltp handles flaky connection and quote fallback."""
+    from data import DataManager
+
+    class QuoteFallbackKite:
+        def ltp(self, keys):
+            raise Exception("LTP 500 error")
+
+        def quote(self, keys):
+            return {"NSE:NIFTY 50": {"last_price": 24250.75}}
+
+    dm = DataManager(QuoteFallbackKite())
+    val = dm.fetch_spot_ltp()
+    _test("Spot LTP falls back to quote() on LTP failure", val == 24250.75, f"got {val}")
+
+
 # ═══════════════════════════════════════════════
 # CONFIG TESTS
 # ═══════════════════════════════════════════════
@@ -886,9 +943,11 @@ if __name__ == "__main__":
     test_pnl_profitable()
     test_pnl_losing()
 
-    # 9. WebSocket / Data Tests (3 assertions across 2 functions)
+    # 9. WebSocket / Data Tests (7 assertions across 4 functions)
     test_ws_stale_ltp()
     test_ws_fresh_ltp()
+    test_fetch_option_ltp_retry_and_fallback()
+    test_fetch_spot_ltp_retry_and_fallback()
 
     # 10. Config Tests (10 assertions across 1 function)
     test_config_values()

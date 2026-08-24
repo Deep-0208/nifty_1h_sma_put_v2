@@ -57,34 +57,43 @@ class DataManager:
             CONFIG["nifty_instrument_token"], from_date, to_date,
         )
 
-        try:
-            time.sleep(random.uniform(0.1, 0.4))
-            candles = self.kite.historical_data(
-                instrument_token=CONFIG["nifty_instrument_token"],
-                from_date=from_date,
-                to_date=to_date,
-                interval=CONFIG["candle_tf"],
-            )
-            self._fetch_count += 1
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                time.sleep(random.uniform(0.1, 0.4))
+                candles = self.kite.historical_data(
+                    instrument_token=CONFIG["nifty_instrument_token"],
+                    from_date=from_date,
+                    to_date=to_date,
+                    interval=CONFIG["candle_tf"],
+                )
+                self._fetch_count += 1
 
-            log_data.info(
-                "Fetched %d Spot 1H candles (total API calls: %d)",
-                len(candles), self._fetch_count,
-            )
+                log_data.info(
+                    "Fetched %d Spot 1H candles (total API calls: %d)",
+                    len(candles), self._fetch_count,
+                )
 
-            if candles:
-                self._spot_candles = candles
-                self._last_fetch_boundary = now
-                self._calculate_sma()
+                if candles:
+                    self._spot_candles = candles
+                    self._last_fetch_boundary = now
+                    self._calculate_sma()
 
-            return self._spot_candles
+                return self._spot_candles
 
-        except Exception as e:
-            log_data.error(
-                "Failed to fetch Spot candles: %s. Returning %d cached.",
-                e, len(self._spot_candles),
-            )
-            return self._spot_candles
+            except Exception as e:
+                log_data.warning(
+                    "Failed to fetch Spot candles (attempt %d/%d): %s",
+                    attempt, max_retries, e,
+                )
+                if attempt < max_retries:
+                    time.sleep(0.5 * (2 ** (attempt - 1)))
+                else:
+                    log_data.error(
+                        "All %d attempts failed to fetch Spot candles: %s. Returning %d cached.",
+                        max_retries, e, len(self._spot_candles),
+                    )
+                    return self._spot_candles
 
     def _calculate_sma(self) -> None:
         """
@@ -175,28 +184,85 @@ class DataManager:
         return self._cached_spot_ltp
 
     def fetch_spot_ltp(self) -> Optional[float]:
-        """REST API fallback for Spot LTP when WebSocket is stale."""
-        try:
-            time.sleep(random.uniform(0.1, 0.4))
-            data = self.kite.ltp("NSE:NIFTY 50")
-            ltp = data["NSE:NIFTY 50"]["last_price"]
-            self.update_spot_ltp(ltp)
-            log_data.debug("REST Spot LTP fallback: %.2f", ltp)
-            return ltp
-        except Exception as e:
-            log_data.error("REST Spot LTP fetch FAILED: %s", e)
-            return None
+        """REST API fallback for Spot LTP when WebSocket is stale with multi-attempt retry."""
+        key = "NSE:NIFTY 50"
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                time.sleep(random.uniform(0.1, 0.3))
+                data = self.kite.ltp([key])
+                if key in data and data[key].get("last_price") is not None:
+                    ltp = float(data[key]["last_price"])
+                    if ltp > 0:
+                        self.update_spot_ltp(ltp)
+                        log_data.debug("REST Spot LTP fallback: %.2f (attempt %d)", ltp, attempt)
+                        return ltp
+            except Exception as e:
+                # Secondary fallback: kite.quote()
+                try:
+                    time.sleep(random.uniform(0.1, 0.2))
+                    qdata = self.kite.quote([key])
+                    if key in qdata and qdata[key].get("last_price") is not None:
+                        ltp = float(qdata[key]["last_price"])
+                        if ltp > 0:
+                            self.update_spot_ltp(ltp)
+                            log_data.info("REST Spot LTP retrieved via quote fallback: %.2f", ltp)
+                            return ltp
+                except Exception:
+                    pass
+
+                log_data.warning(
+                    "REST Spot LTP fetch failed (attempt %d/%d): %s",
+                    attempt, max_retries, e,
+                )
+                if attempt < max_retries:
+                    time.sleep(0.3 * (2 ** (attempt - 1)))
+
+        log_data.error("All %d attempts to fetch REST Spot LTP failed.", max_retries)
+        return None
 
     def fetch_option_ltp(self, tradingsymbol: str) -> Optional[float]:
-        """Fetch current LTP for an option contract."""
-        try:
-            time.sleep(random.uniform(0.1, 0.4))
-            key = f"NFO:{tradingsymbol}"
-            data = self.kite.ltp(key)
-            return data[key]["last_price"]
-        except Exception as e:
-            log_data.error("Option LTP fetch FAILED for %s: %s", tradingsymbol, e)
-            return None
+        """
+        Fetch current LTP for an option contract with multi-tier retries & quote fallback.
+        """
+        key = f"NFO:{tradingsymbol}"
+        max_retries = 4
+        for attempt in range(1, max_retries + 1):
+            try:
+                time.sleep(random.uniform(0.1, 0.3))
+                # 1. Primary: kite.ltp([key])
+                data = self.kite.ltp([key])
+                if key in data and data[key].get("last_price") is not None:
+                    ltp = float(data[key]["last_price"])
+                    if ltp > 0:
+                        log_data.debug("Option LTP [%s]: %.2f (attempt %d)", tradingsymbol, ltp, attempt)
+                        return ltp
+            except Exception as e:
+                log_data.warning(
+                    "Option LTP fetch attempt %d/%d failed for %s: %s",
+                    attempt, max_retries, tradingsymbol, e,
+                )
+
+            # 2. Fallback: kite.quote([key])
+            try:
+                time.sleep(random.uniform(0.1, 0.2))
+                qdata = self.kite.quote([key])
+                if key in qdata and qdata[key].get("last_price") is not None:
+                    ltp = float(qdata[key]["last_price"])
+                    if ltp > 0:
+                        log_data.info(
+                            "Option LTP retrieved via quote fallback for %s: %.2f (attempt %d)",
+                            tradingsymbol, ltp, attempt,
+                        )
+                        return ltp
+            except Exception as qe:
+                log_data.debug("Option quote fallback attempt %d failed for %s: %s", attempt, tradingsymbol, qe)
+
+            if attempt < max_retries:
+                time.sleep(0.3 * (2 ** (attempt - 1)))
+
+        log_data.error("Option LTP fetch FAILED after %d attempts for %s", max_retries, tradingsymbol)
+        return None
 
 
 class InstrumentManager:
@@ -391,8 +457,10 @@ class InstrumentManager:
             return None
 
         # Exact match on target expiry
+        target_strike_int = int(round(float(atm_strike)))
         for inst in self._nifty_puts:
-            if inst["strike"] == atm_strike and inst["expiry"] == expiry:
+            inst_strike = int(round(float(inst.get("strike", 0))))
+            if inst_strike == target_strike_int and inst["expiry"] == expiry:
                 log_data.info(
                     "ATM PUT found: %s (strike=%d, expiry=%s, token=%d)",
                     inst["tradingsymbol"], atm_strike,
