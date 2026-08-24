@@ -1,19 +1,23 @@
 # 📈 NIFTY 1-Hour SMA PUT Strategy
 
-**A production-grade, fully automated intraday algorithmic trading bot for NIFTY 50 options**
+**A production-grade, fully automated positional (carryforward) algorithmic trading bot for NIFTY 50 options**
 
 ---
 
 ## Strategy Overview
 
-This bot implements an institutional **1-Hour SMA Breakdown Strategy** on the **NIFTY 50 spot index**. When a valid bearish breakdown candle completes, it automatically buys the **ATM (At-The-Money) PUT option** (MIS intraday) and monitors the trade via **Spot-Level Stop Loss and Target triggers**.
+This bot implements an institutional **1-Hour SMA Breakdown Strategy** on the **NIFTY 50 spot index**. When a valid bearish breakdown candle completes, it automatically buys the **ATM (At-The-Money) Monthly PUT option** (`NRML` carryforward) and monitors the trade via **Spot-Level Stop Loss and Target triggers**.
 
 ```
 Signal Source:     NIFTY Spot 1H completed candles (Red + Close < SMA20 + Close < SMA50)
 Trigger Source:    NIFTY Spot live WebSocket LTP (token 256265)
-Execution:         ATM PUT Option (BUY on entry, SELL on exit)
+Execution:         ATM Monthly PUT Option (BUY on entry, SELL on exit)
+Product Type:      NRML (Positional Carryforward)
+Expiry Rule:       Monthly expiry (after 20th of the month, rolls to next month's contract)
+Max Trades/Day:    5
 Spot SL:           Signal Candle High
 Spot Target:       Entry Spot - (Signal Candle High - Entry Spot) [1:1 R:R in Spot points]
+Expiry Exit:       15:15 IST (Only on contract expiry day)
 P&L:               (Exit Premium - Entry Premium) × Quantity
 ```
 

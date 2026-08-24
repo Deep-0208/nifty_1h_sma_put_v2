@@ -295,36 +295,34 @@ def test_risk_target_calculation():
 # ═══════════════════════════════════════════════
 
 def test_adversarial_non_weekly_rejection():
-    """T27: Adversarial test - non-weekly earlier expiry must be strictly rejected."""
+    """T27: Adversarial test ensuring non-weekly expiries are strictly rejected."""
     _section("Adversarial Non-Weekly Rejection Tests")
     from data import InstrumentManager
+    from config import CONFIG
 
     class FakeKite:
         def instruments(self, segment):
             return []
 
-    d_non_weekly = date(2026, 8, 28)  # Friday non-weekly special expiry (earlier)
-    d_weekly_1   = date(2026, 9, 1)   # Tuesday weekly 1
-    d_weekly_2   = date(2026, 9, 8)   # Tuesday weekly 2
+    d_non_weekly = date(2026, 8, 28)
+    d_weekly_1   = date(2026, 9, 1)
+    d_weekly_2   = date(2026, 9, 8)
 
     strikes = [24000 + i * 50 for i in range(20)]
     puts = []
 
-    # 1. Non-weekly expiry (20 strikes, but non-weekly tradingsymbol)
     for s in strikes:
         puts.append({
             "name": "NIFTY", "instrument_type": "PE", "segment": "NFO-OPT",
             "strike": s, "expiry": d_non_weekly, "tradingsymbol": f"NIFTY26SPECIAL{s}PE",
             "instrument_token": 1000 + s, "lot_size": 65,
         })
-    # 2. Intended weekly 1
     for s in strikes:
         puts.append({
             "name": "NIFTY", "instrument_type": "PE", "segment": "NFO-OPT",
             "strike": s, "expiry": d_weekly_1, "tradingsymbol": f"NIFTY26901{s}PE",
             "instrument_token": 2000 + s, "lot_size": 65,
         })
-    # 3. Intended weekly 2
     for s in strikes:
         puts.append({
             "name": "NIFTY", "instrument_type": "PE", "segment": "NFO-OPT",
@@ -336,8 +334,7 @@ def test_adversarial_non_weekly_rejection():
     im._nifty_puts = puts
 
     candidates = im._get_weekly_expiry_candidates()
-    print("  [DEBUG] Candidates returned:", candidates)
-
+    
     _test("Adversarial: Non-weekly earlier expiry (2026-08-28) strictly rejected",
           d_non_weekly not in candidates,
           f"candidates were: {candidates}")
@@ -345,24 +342,27 @@ def test_adversarial_non_weekly_rejection():
     _test("Adversarial: Weekly expiries retained",
           d_weekly_1 in candidates and d_weekly_2 in candidates)
 
-    im._resolve_target_expiry()
-    _test("Adversarial: Target expiry resolves to intended weekly (2026-09-01)",
-          im.get_target_expiry() == d_weekly_1,
-          f"got {im.get_target_expiry()}")
+    orig_pref = CONFIG.get("expiry_preference")
+    try:
+        CONFIG["expiry_preference"] = "weekly"
+        im._resolve_target_expiry()
+        _test("Adversarial: Target expiry resolves to intended weekly (2026-09-01)",
+              im.get_target_expiry() == d_weekly_1,
+              f"got {im.get_target_expiry()}")
+    finally:
+        CONFIG["expiry_preference"] = orig_pref
 
 
 def test_monthly_collision_and_holiday_shift():
     """T28: Monthly collision and holiday-shifted weekly expiries."""
     _section("Monthly Collision & Holiday Shift Tests")
     from data import InstrumentManager
+    from config import CONFIG
 
     class FakeKite:
         def instruments(self, segment):
             return []
 
-    # Scenario:
-    # d_month_end = 2026-09-29 (the month-end Tuesday of September with NIFTY26SEP...PE)
-    # d_holiday_shift = 2026-09-07 (Monday weekly with NIFTY26907...PE due to Tuesday holiday)
     d_holiday_shift = date(2026, 9, 7)
     d_month_end = date(2026, 9, 29)
 
@@ -384,19 +384,27 @@ def test_monthly_collision_and_holiday_shift():
 
     im = InstrumentManager(FakeKite())
     im._nifty_puts = puts
-    candidates = im._get_weekly_expiry_candidates()
+    
+    orig_pref = CONFIG.get("expiry_preference")
+    try:
+        CONFIG["expiry_preference"] = "weekly"
+        candidates = im._get_weekly_expiry_candidates()
 
-    _test("Holiday Shift: Monday weekly expiry (2026-09-07) recognized via weekly symbol",
-          d_holiday_shift in candidates)
+        _test("Holiday Shift: Monday weekly expiry (2026-09-07) recognized via weekly symbol",
+              d_holiday_shift in candidates)
 
-    _test("Monthly Collision: Month-end weekly expiry (2026-09-29) recognized",
-          d_month_end in candidates)
+        _test("Monthly Collision: Month-end weekly expiry (2026-09-29) recognized",
+              d_month_end in candidates)
+    finally:
+        CONFIG["expiry_preference"] = orig_pref
 
 
 def test_0dte_selection():
     """T29: 0DTE weekly expiry is selected when today is expiry day."""
     _section("0DTE Weekly Expiry Tests")
     from data import InstrumentManager
+    from config import CONFIG
+    import data as data_mod
 
     class FakeKite:
         def instruments(self, segment):
@@ -423,30 +431,39 @@ def test_0dte_selection():
 
     im = InstrumentManager(FakeKite())
     im._nifty_puts = puts
-    im._resolve_target_expiry()
 
-    _test("0DTE: Target expiry is today (2026-08-25)",
-          im.get_target_expiry() == d_today,
-          f"got {im.get_target_expiry()}")
+    orig_pref = CONFIG.get("expiry_preference")
+    orig_today = data_mod.today_ist
+    try:
+        CONFIG["expiry_preference"] = "weekly"
+        data_mod.today_ist = lambda: d_today
+        im._resolve_target_expiry()
+
+        _test("0DTE: Target expiry is today (2026-08-25)",
+              im.get_target_expiry() == d_today,
+              f"got {im.get_target_expiry()}")
+    finally:
+        CONFIG["expiry_preference"] = orig_pref
+        data_mod.today_ist = orig_today
 
 
 def test_liquidity_fallback_and_fail_closed():
     """T30: Liquidity fallback among true weeklies and fail closed safety."""
     _section("Liquidity Fallback & Fail-Closed Tests")
     from data import InstrumentManager
+    from config import CONFIG
 
     class FakeKite:
         def instruments(self, segment):
             return []
 
-    d_weekly_a = date(2026, 9, 1)   # Weekly A (2 strikes -> illiquid)
-    d_non_weekly_c = date(2026, 9, 4) # Non-weekly C (100 strikes -> non-weekly)
-    d_weekly_b = date(2026, 9, 8)   # Weekly B (20 strikes -> liquid)
+    d_weekly_a = date(2026, 9, 1)
+    d_non_weekly_c = date(2026, 9, 4)
+    d_weekly_b = date(2026, 9, 8)
 
     strikes_full = [24000 + i * 50 for i in range(20)]
     puts = []
 
-    # Weekly A: 2 strikes
     puts.append({"name": "NIFTY", "instrument_type": "PE", "segment": "NFO-OPT",
                  "strike": 24500, "expiry": d_weekly_a, "tradingsymbol": "NIFTY2690124500PE",
                  "instrument_token": 1001, "lot_size": 65})
@@ -454,13 +471,11 @@ def test_liquidity_fallback_and_fail_closed():
                  "strike": 24550, "expiry": d_weekly_a, "tradingsymbol": "NIFTY2690124550PE",
                  "instrument_token": 1002, "lot_size": 65})
 
-    # Non-weekly C: 100 strikes, non-weekly symbol
     for s in range(20000, 25000, 50):
         puts.append({"name": "NIFTY", "instrument_type": "PE", "segment": "NFO-OPT",
                      "strike": s, "expiry": d_non_weekly_c, "tradingsymbol": f"NIFTY26SPECIAL{s}PE",
                      "instrument_token": 2000 + s, "lot_size": 65})
 
-    # Weekly B: 20 strikes
     for s in strikes_full:
         puts.append({"name": "NIFTY", "instrument_type": "PE", "segment": "NFO-OPT",
                      "strike": s, "expiry": d_weekly_b, "tradingsymbol": f"NIFTY26908{s}PE",
@@ -468,38 +483,44 @@ def test_liquidity_fallback_and_fail_closed():
 
     im = InstrumentManager(FakeKite())
     im._nifty_puts = puts
-    im._resolve_target_expiry()
 
-    _test("Liquidity Fallback: Weekly A (<10 strikes) skipped, Non-weekly C ignored, Weekly B selected",
-          im.get_target_expiry() == d_weekly_b,
-          f"got {im.get_target_expiry()}")
-
-    # Fail closed test: when ALL weekly candidates fail liquidity (<10 strikes)
-    puts_all_illiquid = [
-        {"name": "NIFTY", "instrument_type": "PE", "segment": "NFO-OPT",
-         "strike": 24500, "expiry": d_weekly_a, "tradingsymbol": "NIFTY2690124500PE",
-         "instrument_token": 1001, "lot_size": 65},
-        {"name": "NIFTY", "instrument_type": "PE", "segment": "NFO-OPT",
-         "strike": 24500, "expiry": d_weekly_b, "tradingsymbol": "NIFTY2690824500PE",
-         "instrument_token": 3001, "lot_size": 65},
-    ]
-    im_fail = InstrumentManager(FakeKite())
-    im_fail._nifty_puts = puts_all_illiquid
-    failed_closed = False
+    orig_pref = CONFIG.get("expiry_preference")
     try:
-        im_fail._resolve_target_expiry()
-    except RuntimeError as exc:
-        if "EXPIRY_SELECTION_FAILED" in str(exc):
-            failed_closed = True
+        CONFIG["expiry_preference"] = "weekly"
+        im._resolve_target_expiry()
 
-    _test("Fail Closed: RuntimeError raised when all weekly candidates fail liquidity",
-          failed_closed and im_fail.get_target_expiry() is None)
+        _test("Liquidity Fallback: Weekly A (<10 strikes) skipped, Non-weekly C ignored, Weekly B selected",
+              im.get_target_expiry() == d_weekly_b,
+              f"got {im.get_target_expiry()}")
+
+        puts_all_illiquid = [
+            {"name": "NIFTY", "instrument_type": "PE", "segment": "NFO-OPT",
+             "strike": 24500, "expiry": d_weekly_a, "tradingsymbol": "NIFTY2690124500PE",
+             "instrument_token": 1001, "lot_size": 65},
+            {"name": "NIFTY", "instrument_type": "PE", "segment": "NFO-OPT",
+             "strike": 24500, "expiry": d_weekly_b, "tradingsymbol": "NIFTY2690824500PE",
+             "instrument_token": 3001, "lot_size": 65},
+        ]
+        im_fail = InstrumentManager(FakeKite())
+        im_fail._nifty_puts = puts_all_illiquid
+        failed_closed = False
+        try:
+            im_fail._resolve_target_expiry()
+        except RuntimeError as exc:
+            if "EXPIRY_SELECTION_FAILED" in str(exc):
+                failed_closed = True
+
+        _test("Fail Closed: RuntimeError raised when all weekly candidates fail liquidity",
+              failed_closed and im_fail.get_target_expiry() is None)
+    finally:
+        CONFIG["expiry_preference"] = orig_pref
 
 
 def test_exact_atm_contract_enforcement():
     """T31: Exact ATM contract enforcement."""
     _section("Exact ATM Contract Enforcement Tests")
     from data import InstrumentManager
+    from config import CONFIG
 
     class FakeKite:
         def instruments(self, segment):
@@ -518,21 +539,27 @@ def test_exact_atm_contract_enforcement():
 
     im = InstrumentManager(FakeKite())
     im._nifty_puts = puts
-    im._resolve_target_expiry()
 
-    # 1. Exact ATM lookup
-    opt = im.get_atm_put(24500)
-    _test("Exact ATM: Strike 24500 found",
-          opt is not None and opt["strike"] == 24500)
+    orig_pref = CONFIG.get("expiry_preference")
+    try:
+        CONFIG["expiry_preference"] = "weekly"
+        im._resolve_target_expiry()
 
-    # 2. Missing ATM lookup returns None
-    missing = im.get_atm_put(99999)
-    _test("Exact ATM: Missing strike returns None (no non-ATM fallback)",
-          missing is None)
+        # 1. Exact ATM lookup
+        opt = im.get_atm_put(24500)
+        _test("Exact ATM: Strike 24500 found",
+              opt is not None and opt["strike"] == 24500)
 
-    # 3. Target expiry invariant
-    _test("Exact ATM: Target expiry remains invariant after missing strike lookup",
-          im.get_target_expiry() == d_target)
+        # 2. Missing ATM lookup returns None
+        missing = im.get_atm_put(99999)
+        _test("Exact ATM: Missing strike returns None (no non-ATM fallback)",
+              missing is None)
+
+        # 3. Target expiry invariant
+        _test("Exact ATM: Target expiry remains invariant after missing strike lookup",
+              im.get_target_expiry() == d_target)
+    finally:
+        CONFIG["expiry_preference"] = orig_pref
 
 
 # ═══════════════════════════════════════════════
@@ -873,18 +900,69 @@ def test_config_values():
     _test("strike_step = 50", CONFIG["strike_step"] == 50)
     _test("sma_short = 20", CONFIG["sma_short"] == 20)
     _test("sma_long = 50", CONFIG["sma_long"] == 50)
-    _test("product = MIS", CONFIG["product"] == "MIS")
+    _test("product = NRML", CONFIG["product"] == "NRML")
     _test("trading_mode = PAPER", CONFIG["trading_mode"] == "PAPER")
-    _test("expiry_preference = weekly", CONFIG["expiry_preference"] == "weekly")
-    _test("square_off_time = 15:20",
-          CONFIG["square_off_time"].hour == 15 and
-          CONFIG["square_off_time"].minute == 20)
+    _test("expiry_preference = monthly", CONFIG["expiry_preference"] == "monthly")
+    _test("monthly_rollover_day = 20", CONFIG.get("monthly_rollover_day") == 20)
+    _test("max_trades_per_day = 5", CONFIG.get("max_trades_per_day") == 5)
+    _test("expiry_force_exit = 15:15",
+          CONFIG["expiry_force_exit"].hour == 15 and
+          CONFIG["expiry_force_exit"].minute == 15)
     _test("first_entry = 10:15",
           CONFIG["first_entry"].hour == 10 and
           CONFIG["first_entry"].minute == 15)
     _test("last_entry = 15:15",
           CONFIG["last_entry"].hour == 15 and
           CONFIG["last_entry"].minute == 15)
+
+
+def test_monthly_rollover_20th_rule():
+    """T44: 20th-Day Monthly Expiry Rollover Tests."""
+    _section("20th-Day Monthly Expiry Rollover Tests")
+    from data import InstrumentManager
+
+    class FakeKite:
+        def instruments(self, segment):
+            return []
+
+    d_aug = date(2026, 8, 27)  # August monthly expiry
+    d_sep = date(2026, 9, 24)  # September monthly expiry
+
+    puts = []
+    # August monthly PE (20 strikes)
+    for s in range(24000, 25000, 50):
+        puts.append({
+            "name": "NIFTY", "instrument_type": "PE", "segment": "NFO-OPT",
+            "strike": s, "expiry": d_aug, "tradingsymbol": f"NIFTY26AUG{s}PE",
+            "instrument_token": 1000 + s, "lot_size": 65,
+        })
+    # September monthly PE (20 strikes)
+    for s in range(24000, 25000, 50):
+        puts.append({
+            "name": "NIFTY", "instrument_type": "PE", "segment": "NFO-OPT",
+            "strike": s, "expiry": d_sep, "tradingsymbol": f"NIFTY26SEP{s}PE",
+            "instrument_token": 2000 + s, "lot_size": 65,
+        })
+
+    im = InstrumentManager(FakeKite())
+    im._nifty_puts = puts
+
+    import data as data_mod
+    orig_today = data_mod.today_ist
+    try:
+        # Scenario 1: Today is August 14 (<= 20) -> selects August monthly expiry
+        data_mod.today_ist = lambda: date(2026, 8, 14)
+        im._resolve_target_expiry()
+        _test("Monthly Rollover: day <= 20 (Aug 14) resolves to August expiry (Aug 27)",
+              im.get_target_expiry() == d_aug, f"got {im.get_target_expiry()}")
+
+        # Scenario 2: Today is August 21 (> 20) -> selects September monthly expiry
+        data_mod.today_ist = lambda: date(2026, 8, 21)
+        im._resolve_target_expiry()
+        _test("Monthly Rollover: day > 20 (Aug 21) resolves to September expiry (Sep 24)",
+              im.get_target_expiry() == d_sep, f"got {im.get_target_expiry()}")
+    finally:
+        data_mod.today_ist = orig_today
 
 
 # ═══════════════════════════════════════════════
@@ -949,8 +1027,11 @@ if __name__ == "__main__":
     test_fetch_option_ltp_retry_and_fallback()
     test_fetch_spot_ltp_retry_and_fallback()
 
-    # 10. Config Tests (10 assertions across 1 function)
+    # 10. Config Tests (12 assertions across 1 function)
     test_config_values()
+
+    # 11. Monthly 20th Rollover Tests (2 assertions across 1 function)
+    test_monthly_rollover_20th_rule()
 
     # Summary
     total = _passed + _failed

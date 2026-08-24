@@ -47,8 +47,8 @@ CONFIG = {
     "strike_step": 50,
 
     # Expiry
-    "expiry_preference": "weekly",
-    # 0DTE is allowed per founder decision
+    "expiry_preference": "monthly",
+    "monthly_rollover_day": 20,       # Date > 20 switches to next month monthly expiry
 
     # Candle / timeframe
     "candle_tf": "60minute",
@@ -60,22 +60,22 @@ CONFIG = {
     "sma_lookback_days": 20,
 
     # Risk management
-    # No max_trades_per_day limit (founder decision: unlimited)
-    # No max_spot_risk cap (founder decision: unlimited)
+    "max_trades_per_day": 5,          # Maximum trades allowed per day
     "rr_ratio": 1.0,
 
     # Daily drawdown kill-switch (0 = disabled)
     "max_daily_loss": 0,
 
     # Market timings (IST)
-    "market_open":    dtime(9, 15),
-    "first_entry":    dtime(10, 15),
-    "last_entry":     dtime(15, 15),
-    "square_off_time": dtime(15, 20),
-    "market_close":   dtime(15, 30),
+    "market_open":        dtime(9, 15),
+    "first_entry":        dtime(10, 15),
+    "last_entry":         dtime(15, 15),
+    "expiry_force_exit":  dtime(15, 15),  # Mandatory exit ONLY on contract expiry day
+    "square_off_time":    dtime(15, 15),  # Backwards compatibility alias for expiry force exit
+    "market_close":       dtime(15, 30),
 
-    # Product type
-    "product": "MIS",
+    # Product type (NRML for positional / carryforward)
+    "product": "NRML",
 
     # Trading mode
     "trading_mode": "PAPER",

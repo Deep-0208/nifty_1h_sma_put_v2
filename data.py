@@ -330,8 +330,29 @@ class InstrumentManager:
             "Lot size verified: %d (matches config).", self._verified_lot_size
         )
 
-        # Determine target weekly expiry
+        # Determine target expiry
         self._resolve_target_expiry()
+
+    def _get_monthly_expiry_candidates(self) -> List[date]:
+        """
+        Identify genuine monthly expiry dates (the last expiry date of each calendar month)
+        for NIFTY PE options.
+        """
+        today = today_ist()
+        future_puts = [i for i in self._nifty_puts if i["expiry"] >= today]
+        if not future_puts:
+            return []
+
+        # Find the last expiry date for each (year, month)
+        month_to_expiries = {}
+        for i in future_puts:
+            if self.MONTHLY_SYMBOL_REGEX.match(i["tradingsymbol"]):
+                exp = i["expiry"]
+                key = (exp.year, exp.month)
+                if key not in month_to_expiries or exp > month_to_expiries[key]:
+                    month_to_expiries[key] = exp
+
+        return sorted(month_to_expiries.values())
 
     def _get_weekly_expiry_candidates(self) -> List[date]:
         """
@@ -373,27 +394,48 @@ class InstrumentManager:
 
     def _resolve_target_expiry(self) -> None:
         """
-        Select the nearest weekly NIFTY expiry >= today.
-        0DTE is explicitly allowed (founder decision D7).
+        Select the target NIFTY PE expiry date based on CONFIG["expiry_preference"].
 
-        Execution flow:
-          1. Identify all valid weekly expiry candidates >= today.
-          2. Evaluate candidates in chronological order.
-          3. Apply ENGINEERING LIQUIDITY SAFETY CHECK (>= MIN_STRIKES_PER_EXPIRY).
-          4. If candidate has insufficient strikes (< 10):
-             Log EXPIRY_FALLBACK and evaluate next weekly candidate.
-          5. If NO candidate satisfies liquidity requirements:
-             FAIL CLOSED (raise RuntimeError) — NEVER select an illiquid expiry.
+        For Monthly preference with 20th-Day Rollover:
+          - If today.day <= monthly_rollover_day (20):
+              Target current calendar month's monthly expiry (if >= today).
+          - If today.day > monthly_rollover_day (20):
+              Target next calendar month's monthly expiry.
+          - Verified with MIN_STRIKES_PER_EXPIRY >= 10 liquidity safety.
         """
         today = today_ist()
-        self._weekly_expiries = self._get_weekly_expiry_candidates()
+        pref = CONFIG.get("expiry_preference", "monthly")
 
-        if not self._weekly_expiries:
+        if pref == "monthly":
+            monthly_expiries = self._get_monthly_expiry_candidates()
+            if not monthly_expiries:
+                self._target_expiry = None
+                raise RuntimeError(f"No valid monthly NIFTY PE expiries found >= {today.isoformat()}!")
+
+            rollover_day = CONFIG.get("monthly_rollover_day", 20)
+            if today.day <= rollover_day:
+                # Target current month's monthly expiry >= today
+                candidates = [e for e in monthly_expiries if e >= today]
+            else:
+                # After 20th: Skip current month, target next month's monthly expiry
+                candidates = [
+                    e for e in monthly_expiries
+                    if (e.year > today.year) or (e.year == today.year and e.month > today.month)
+                ]
+
+            if not candidates:
+                # Fallback to nearest available monthly expiry if next month is not yet published
+                candidates = [e for e in monthly_expiries if e >= today]
+        else:
+            self._weekly_expiries = self._get_weekly_expiry_candidates()
+            candidates = self._weekly_expiries
+
+        if not candidates:
             self._target_expiry = None
-            raise RuntimeError(f"No valid weekly NIFTY PE expiries found >= {today.isoformat()}!")
+            raise RuntimeError(f"No valid NIFTY PE expiries found >= {today.isoformat()}!")
 
         selected_expiry = None
-        for idx, candidate in enumerate(self._weekly_expiries):
+        for idx, candidate in enumerate(candidates):
             strikes_for_cand = [
                 i for i in self._nifty_puts if i["expiry"] == candidate
             ]
@@ -402,7 +444,7 @@ class InstrumentManager:
             if strike_count >= self.MIN_STRIKES_PER_EXPIRY:
                 selected_expiry = candidate
                 if idx > 0:
-                    requested = self._weekly_expiries[0]
+                    requested = candidates[0]
                     log.warning(
                         "EXPIRY_FALLBACK: requested=%s, selected=%s, "
                         "reason=INSUFFICIENT_STRIKES_ON_PRIMARY (had %d strikes, required >= %d)",
@@ -413,7 +455,7 @@ class InstrumentManager:
                 break
             else:
                 log.warning(
-                    "Candidate weekly expiry %s has only %d strikes (< %d minimum). Evaluating next candidate.",
+                    "Candidate expiry %s has only %d strikes (< %d minimum). Evaluating next candidate.",
                     candidate.isoformat(), strike_count, self.MIN_STRIKES_PER_EXPIRY,
                 )
 
@@ -421,17 +463,19 @@ class InstrumentManager:
         if selected_expiry is None:
             self._target_expiry = None
             raise RuntimeError(
-                f"EXPIRY_SELECTION_FAILED: No candidate weekly expiry >= {today.isoformat()} "
+                f"EXPIRY_SELECTION_FAILED: No candidate expiry >= {today.isoformat()} "
                 f"satisfies liquidity safety check (>= {self.MIN_STRIKES_PER_EXPIRY} strikes)."
             )
 
         self._target_expiry = selected_expiry
 
         log.info(
-            "Target weekly expiry resolved: %s (today=%s, 0DTE=%s, strikes=%d)",
+            "Target expiry resolved: %s (today=%s, day=%d, pref=%s, rollover_day=%d, strikes=%d)",
             self._target_expiry.isoformat(),
             today.isoformat(),
-            "YES" if self._target_expiry == today else "NO",
+            today.day,
+            pref,
+            CONFIG.get("monthly_rollover_day", 20),
             len([i for i in self._nifty_puts if i["expiry"] == self._target_expiry]),
         )
 

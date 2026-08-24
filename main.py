@@ -44,10 +44,11 @@ def _banner():
     log.info("  TF: %s | Lots: %d | Lot Size: %d", CONFIG["candle_tf"], CONFIG["num_lots"], CONFIG["lot_size_default"])
     log.info("  SMA Short: %d | SMA Long: %d", CONFIG["sma_short"], CONFIG["sma_long"])
     log.info("  ATM step: %dpt | R:R: 1:1.0 (Spot)", CONFIG["strike_step"])
-    log.info("  Expiry: %s (0DTE allowed)", CONFIG["expiry_preference"])
+    log.info("  Expiry: %s (Rollover after %dth)", CONFIG["expiry_preference"], CONFIG.get("monthly_rollover_day", 20))
     log.info("  Entry window: %s – %s", CONFIG["first_entry"], CONFIG["last_entry"])
-    log.info("  Force exit: %s", CONFIG["square_off_time"])
-    log.info("  Product: %s (Intraday)", CONFIG["product"])
+    log.info("  Force exit: %s (Expiry Day Only)", CONFIG.get("expiry_force_exit", dtime(15, 15)))
+    log.info("  Product: %s (Positional / Carryforward)", CONFIG["product"])
+    log.info("  Max trades/day: %d", CONFIG.get("max_trades_per_day", 5))
     log.info("=" * 65)
 
 
@@ -55,6 +56,15 @@ def _is_market_hours() -> bool:
     """Check if current time is within market hours."""
     now = now_ist().time()
     return CONFIG["market_open"] <= now <= CONFIG["market_close"]
+
+
+def _is_expiry_day(state: dict) -> bool:
+    """Check if the current open position's contract expires today."""
+    pos = state.get("current_position")
+    if not pos:
+        return False
+    exp_str = str(pos.get("expiry", ""))
+    return exp_str == today_ist().isoformat()
 
 
 def _smart_sleep(in_position: bool) -> None:
@@ -125,18 +135,15 @@ def _crash_recovery(
             tg.bot_restarted(symbol, entry_premium, "BROKER_ALREADY_EXITED")
             return
 
-    # If market is closed, just note it
+    # Outside market hours: preserve position for next market open
     if not _is_market_hours():
-        log.warning(
-            "Market closed. MIS position should have been "
-            "auto-squared by broker. Clearing state."
+        log.info(
+            "Outside market hours. Positional NRML position %s preserved for next session.",
+            symbol,
         )
-        state["in_position"] = False
-        state["current_position"] = None
-        save_state(state)
         return
 
-    # If downtime > 15 minutes during market hours, force exit
+    # If downtime > 15 minutes DURING MARKET HOURS, force exit
     if downtime_minutes > 15:
         log.warning(
             "Downtime > 15 min during market hours. Force square-off."
@@ -303,7 +310,8 @@ def main():
         print("\n" + "=" * 60)
         print("WARNING: You are about to start LIVE trading with real money!")
         print("Strategy: NIFTY 1H SMA PUT Strategy")
-        print("Product: MIS (Intraday)")
+        print("Product: NRML (Positional Carryforward)")
+        print(f"Max Trades/Day: {CONFIG.get('max_trades_per_day', 5)}")
         print("=" * 60)
         confirm = input("Proceed? (y/n): ").strip().lower()
         if confirm != "y":
@@ -450,6 +458,7 @@ def main():
     # 10. Main market loop
     last_heartbeat = time.time()
     last_rollover_date = today_ist()
+    _expiry_exit_done = False
 
     try:
         while True:
@@ -457,10 +466,10 @@ def main():
             current_time = now.time()
             current_date = now.date()
 
-            # Date rollover check
+            # Date rollover check (for continuous 24/7 overnight runs)
             if current_date != last_rollover_date:
                 log.info(
-                    "Date rollover: %s -> %s. Resetting daily counters.",
+                    "Date rollover: %s -> %s. Resetting daily counters. Preserving open position.",
                     last_rollover_date, current_date,
                 )
                 if analytics:
@@ -474,35 +483,57 @@ def main():
                 state["last_signal_candle_time"] = None
                 save_state(state)
                 last_rollover_date = current_date
+                _expiry_exit_done = False
+                try:
+                    instrument_mgr.load_instruments()
+                except Exception as ie:
+                    log.warning("Instrument reload on date rollover: %s", ie)
 
-            # Square-off at 15:20 (D5/D6)
-            if current_time >= CONFIG["square_off_time"]:
+            # Expiry-day force square-off at 15:15 IST (only on contract expiry date)
+            expiry_force_time = CONFIG.get("expiry_force_exit", dtime(15, 15))
+            if (state.get("in_position")
+                    and _is_expiry_day(state)
+                    and current_time >= expiry_force_time
+                    and not _expiry_exit_done):
+                log.info("Contract expiry day square-off (15:15 IST) reached. Exiting position.")
+                with trade_lock:
+                    if state.get("in_position"):
+                        symbol = state["current_position"]["tradingsymbol"]
+                        exit_premium = data_mgr.fetch_option_ltp(symbol)
+                        order_mgr.exit_trade("EXPIRY_DAY_SQUAREOFF", exit_premium)
+                _expiry_exit_done = True
+
+            # Day summary and overnight sleep after market close (15:30 IST)
+            if current_time >= CONFIG["market_close"]:
+                log.info("Market closed for the day.")
+                if analytics:
+                    analytics.generate_daily_summary(state.get("cash", CONFIG["starting_capital"]))
+
+                tg.day_summary(
+                    state.get("trades_today", 0),
+                    state.get("realized_pnl_today", 0.0),
+                    state.get("total_realized_pnl", 0.0),
+                    state.get("cash", 0.0),
+                )
+                # Sleep until next market open
+                log.info("Sleeping until next market open (09:05 IST)...")
+                while now_ist().time() >= CONFIG["market_close"] or \
+                      now_ist().time() < CONFIG["market_open"]:
+                    time.sleep(60)
+
+                # Next morning open: immediately check Spot LTP for open position gap
                 if state.get("in_position"):
-                    log.info("Square-off time (15:20) reached. Exiting position.")
-                    with trade_lock:
-                        if state.get("in_position"):
-                            symbol = state["current_position"]["tradingsymbol"]
-                            exit_premium = data_mgr.fetch_option_ltp(symbol)
-                            order_mgr.exit_trade("SQUARE_OFF_1520", exit_premium)
-
-                # Day summary after market close
-                if current_time >= CONFIG["market_close"]:
-                    log.info("Market closed for the day.")
-                    if analytics:
-                        analytics.generate_daily_summary(state.get("cash", CONFIG["starting_capital"]))
-
-                    tg.day_summary(
-                        state.get("trades_today", 0),
-                        state.get("realized_pnl_today", 0.0),
-                        state.get("total_realized_pnl", 0.0),
-                        state.get("cash", 0.0),
-                    )
-                    # Sleep until next market open
-                    log.info("Sleeping until next market open...")
-                    while now_ist().time() >= CONFIG["market_close"] or \
-                          now_ist().time() < CONFIG["market_open"]:
-                        time.sleep(60)
-                    continue
+                    log.info("🌅 Market opened. Checking Spot LTP for overnight gap on open position...")
+                    morning_spot = data_mgr.fetch_spot_ltp()
+                    if morning_spot is not None:
+                        with trade_lock:
+                            gap_exit = order_mgr.check_exit_conditions_with_spot_ltp(morning_spot)
+                            if gap_exit:
+                                log.warning("Overnight gap triggered exit: %s (Spot=%.2f)", gap_exit, morning_spot)
+                                symbol = state["current_position"]["tradingsymbol"]
+                                exit_premium = data_mgr.fetch_option_ltp(symbol)
+                                order_mgr.exit_trade(gap_exit, exit_premium)
+                continue
 
             # Wait for market open
             if current_time < CONFIG["market_open"]:
@@ -600,6 +631,16 @@ def main():
             candle_time_str = str(candle_time)
             if state.get("last_signal_candle_time") == candle_time_str:
                 log.debug("Duplicate candle %s already evaluated.", candle_time_str)
+                _smart_sleep(False)
+                continue
+
+            # Max trades per day limit
+            max_trades = CONFIG.get("max_trades_per_day", 5)
+            if max_trades > 0 and state.get("trades_today", 0) >= max_trades:
+                log.debug(
+                    "Max trades/day reached (%d/%d). Skipping new entries.",
+                    state.get("trades_today", 0), max_trades,
+                )
                 _smart_sleep(False)
                 continue
 

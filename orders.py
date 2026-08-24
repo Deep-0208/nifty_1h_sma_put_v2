@@ -67,7 +67,7 @@ class OrderManager:
                     transaction_type=self.kite.TRANSACTION_TYPE_BUY,
                     quantity=qty,
                     order_type=self.kite.ORDER_TYPE_MARKET,
-                    product=self.kite.PRODUCT_MIS,
+                    product=self.kite.PRODUCT_NRML,
                 )
                 log_orders.info("BUY order placed: order_id=%s", order_id)
 
