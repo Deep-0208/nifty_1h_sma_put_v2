@@ -965,6 +965,29 @@ def test_monthly_rollover_20th_rule():
         data_mod.today_ist = orig_today
 
 
+def test_main_banner_and_helpers():
+    """T12: Test main module banner and helper functions for runtime errors/missing imports."""
+    _section("Main Module Helper Tests")
+    import main as main_mod
+    try:
+        main_mod._banner()
+        _test("main._banner() executes without NameError", True)
+    except Exception as e:
+        _test("main._banner() executes without NameError", False, str(e))
+
+    try:
+        is_mkt = main_mod._is_market_hours()
+        _test("main._is_market_hours() returns boolean", isinstance(is_mkt, bool))
+    except Exception as e:
+        _test("main._is_market_hours() returns boolean", False, str(e))
+
+    try:
+        is_exp = main_mod._is_expiry_day({"current_position": {"expiry": today_ist().isoformat()}})
+        _test("main._is_expiry_day() returns True for today", is_exp is True)
+    except Exception as e:
+        _test("main._is_expiry_day() returns True for today", False, str(e))
+
+
 # ═══════════════════════════════════════════════
 # RUN ALL TESTS
 # ═══════════════════════════════════════════════
@@ -1032,6 +1055,9 @@ if __name__ == "__main__":
 
     # 11. Monthly 20th Rollover Tests (2 assertions across 1 function)
     test_monthly_rollover_20th_rule()
+
+    # 12. Main Module Helper Tests (3 assertions across 1 function)
+    test_main_banner_and_helpers()
 
     # Summary
     total = _passed + _failed

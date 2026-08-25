@@ -11,7 +11,7 @@ import sys
 import time
 import random
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dtime
 
 from kiteconnect import KiteTicker
 
