@@ -12,7 +12,7 @@ import json
 import math
 import tempfile
 import shutil
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, date, time as dtime, timedelta, timezone
 from pathlib import Path
 
 from config import today_ist, now_ist
@@ -988,6 +988,97 @@ def test_main_banner_and_helpers():
         _test("main._is_expiry_day() returns True for today", False, str(e))
 
 
+def test_data_manager_boundary_caching_and_drop_incomplete():
+    """T13: Test DataManager boundary caching, _drop_incomplete_candle, and SMA calculation."""
+    _section("DataManager Boundary Caching & Candle Drop Tests")
+    from data import DataManager
+    import data as data_mod
+
+    class MockKite:
+        def __init__(self, candles):
+            self._candles = candles
+            self.api_calls = 0
+
+        def historical_data(self, *args, **kwargs):
+            self.api_calls += 1
+            return list(self._candles)
+
+    # 1. Test _drop_incomplete_candle
+    dm = DataManager(None)
+    
+    # 09:15 candle evaluated at 10:05 (forming) -> dropped
+    orig_now = data_mod.now_ist
+    try:
+        data_mod.now_ist = lambda: datetime(2026, 8, 26, 10, 5, 0, tzinfo=IST)
+        raw_candles = [
+            {"date": datetime(2026, 8, 25, 15, 15, tzinfo=IST), "close": 24200, "open": 24200, "high": 24200, "low": 24200},
+            {"date": datetime(2026, 8, 26, 9, 15, tzinfo=IST), "close": 24250, "open": 24200, "high": 24300, "low": 24200},
+        ]
+        completed = dm._drop_incomplete_candle(raw_candles)
+        _test("_drop_incomplete_candle drops 09:15 bar at 10:05", len(completed) == 1 and completed[-1]["date"].date() == date(2026, 8, 25))
+
+        # 09:15 candle evaluated at 10:15:05 (completed) -> kept
+        data_mod.now_ist = lambda: datetime(2026, 8, 26, 10, 15, 5, tzinfo=IST)
+        completed = dm._drop_incomplete_candle(raw_candles)
+        _test("_drop_incomplete_candle keeps 09:15 bar at 10:15:05", len(completed) == 2 and completed[-1]["date"] == datetime(2026, 8, 26, 9, 15, tzinfo=IST))
+
+        # 15:15 candle (closes 15:30) evaluated at 15:20 (forming) -> dropped
+        raw_1515 = [
+            {"date": datetime(2026, 8, 26, 14, 15, tzinfo=IST), "close": 24200, "open": 24200, "high": 24200, "low": 24200},
+            {"date": datetime(2026, 8, 26, 15, 15, tzinfo=IST), "close": 24250, "open": 24200, "high": 24300, "low": 24200},
+        ]
+        data_mod.now_ist = lambda: datetime(2026, 8, 26, 15, 20, 0, tzinfo=IST)
+        completed = dm._drop_incomplete_candle(raw_1515)
+        _test("_drop_incomplete_candle drops 15:15 bar at 15:20", len(completed) == 1 and completed[-1]["date"].time() == dtime(14, 15))
+
+        # 15:15 candle evaluated at 15:30:05 (completed) -> kept
+        data_mod.now_ist = lambda: datetime(2026, 8, 26, 15, 30, 5, tzinfo=IST)
+        completed = dm._drop_incomplete_candle(raw_1515)
+        _test("_drop_incomplete_candle keeps 15:15 bar at 15:30:05", len(completed) == 2 and completed[-1]["date"].time() == dtime(15, 15))
+
+        # 2. Test Boundary Caching
+        mock_kite = MockKite([
+            {"date": datetime(2026, 8, 25, 15, 15, tzinfo=IST), "close": 24200, "open": 24200, "high": 24200, "low": 24200},
+        ])
+        dm_cache = DataManager(mock_kite)
+        
+        # Initial fetch at 09:05 IST
+        data_mod.now_ist = lambda: datetime(2026, 8, 26, 9, 5, 0, tzinfo=IST)
+        data_mod.today_ist = lambda: date(2026, 8, 26)
+        c1 = dm_cache.fetch_spot_candles()
+        _test("Initial fetch_spot_candles calls Kite API (api_calls=1)", mock_kite.api_calls == 1)
+
+        # Polling at 09:45 IST (before 10:15:03) -> Cache HIT, NO API call
+        data_mod.now_ist = lambda: datetime(2026, 8, 26, 9, 45, 0, tzinfo=IST)
+        c2 = dm_cache.fetch_spot_candles()
+        _test("Polling at 09:45 (before 10:15:03) hits cache without API call", mock_kite.api_calls == 1 and len(c2) == 1)
+
+        # Polling at 10:05 IST (before 10:15:03) -> Cache HIT, NO API call
+        data_mod.now_ist = lambda: datetime(2026, 8, 26, 10, 5, 0, tzinfo=IST)
+        c3 = dm_cache.fetch_spot_candles()
+        _test("Polling at 10:05 (before 10:15:03) hits cache without API call", mock_kite.api_calls == 1)
+
+        # At 10:15:04 IST -> Cache EXPIRED, Kite API is called
+        mock_kite._candles = [
+            {"date": datetime(2026, 8, 25, 15, 15, tzinfo=IST), "close": 24200, "open": 24200, "high": 24200, "low": 24200},
+            {"date": datetime(2026, 8, 26, 9, 15, tzinfo=IST), "close": 24250, "open": 24200, "high": 24300, "low": 24200},
+            {"date": datetime(2026, 8, 26, 10, 15, tzinfo=IST), "close": 24260, "open": 24250, "high": 24270, "low": 24240},
+        ]
+        data_mod.now_ist = lambda: datetime(2026, 8, 26, 10, 15, 4, tzinfo=IST)
+        c4 = dm_cache.fetch_spot_candles()
+        _test("At 10:15:04 (after 10:15:03), Kite API is called (api_calls=2)", mock_kite.api_calls == 2)
+        _test("Forming 10:15 bar is dropped, keeping completed 09:15 bar", len(c4) == 2 and c4[-1]["date"] == datetime(2026, 8, 26, 9, 15, tzinfo=IST))
+
+        # At 10:45 IST (before 11:15:03) -> Cache HIT, NO API call
+        data_mod.now_ist = lambda: datetime(2026, 8, 26, 10, 45, 0, tzinfo=IST)
+        c5 = dm_cache.fetch_spot_candles()
+        _test("Polling at 10:45 (before 11:15:03) hits cache (api_calls=2)", mock_kite.api_calls == 2)
+
+    finally:
+        data_mod.now_ist = orig_now
+        data_mod.today_ist = today_ist
+
+
 # ═══════════════════════════════════════════════
 # RUN ALL TESTS
 # ═══════════════════════════════════════════════
@@ -1058,6 +1149,9 @@ if __name__ == "__main__":
 
     # 12. Main Module Helper Tests (3 assertions across 1 function)
     test_main_banner_and_helpers()
+
+    # 13. DataManager Boundary Caching & Candle Drop Tests (8 assertions)
+    test_data_manager_boundary_caching_and_drop_incomplete()
 
     # Summary
     total = _passed + _failed

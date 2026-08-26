@@ -8,7 +8,7 @@ import time
 import random
 import math
 import re
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, time as dtime
 from typing import Dict, List, Optional, Any
 
 from config import CONFIG, IST, now_ist, today_ist, log_data, log
@@ -21,30 +21,56 @@ class DataManager:
         self.kite = kite
         self._spot_candles: List[Dict] = []
         self._last_candle_time: Optional[datetime] = None
-        self._last_fetch_boundary: Optional[datetime] = None
         self._cached_spot_ltp: Optional[float] = None
         self._spot_ltp_updated_at: Optional[datetime] = None
         self._fetch_count: int = 0
 
-    def fetch_spot_candles(self) -> List[Dict]:
+    def fetch_spot_candles(self, count: int = 120, force_refresh: bool = False) -> List[Dict]:
         """
         Fetch 1H historical candles for NIFTY Spot.
         Uses smart boundary caching: only hits API when
-        the current 1H boundary has actually elapsed.
+        a new 1H candle boundary has actually completed.
         """
         now = now_ist()
+        today = today_ist()
 
-        if self._last_fetch_boundary is not None:
-            minutes_since = (now - self._last_fetch_boundary).total_seconds() / 60
-            if minutes_since < CONFIG["candle_tf_minutes"]:
-                log_data.debug(
-                    "Boundary cache HIT: %.1f min since last fetch "
-                    "(boundary=%s). Returning %d cached candles.",
-                    minutes_since,
-                    self._last_fetch_boundary.strftime("%H:%M"),
-                    len(self._spot_candles),
-                )
-                return self._spot_candles
+        # ── Smart Boundary Caching ───────────────────
+        if not force_refresh and self._spot_candles:
+            last_start = self._spot_candles[-1].get("date")
+            if last_start:
+                if not hasattr(last_start, "tzinfo") or last_start.tzinfo is None:
+                    last_start = last_start.replace(tzinfo=IST)
+                else:
+                    last_start = last_start.astimezone(IST)
+
+                # If all cached candles are from previous days, today's first 1H candle
+                # (09:15 - 10:15) closes at 10:15:03 IST.
+                if last_start.date() < today:
+                    next_close = datetime.combine(
+                        today, dtime(10, 15, 3), tzinfo=IST
+                    )
+                else:
+                    # Next candle starts at last_start + 1H, and closes at last_start + 2H
+                    # Exception: 14:15 candle starts at 14:15 and closes at 15:15 (next close is 15:15:03)
+                    # The 15:15 candle closes at 15:30:03.
+                    if last_start.time() == dtime(14, 15):
+                        next_close = last_start + timedelta(minutes=60, seconds=3)
+                    else:
+                        next_close = last_start + timedelta(
+                            minutes=CONFIG["candle_tf_minutes"] * 2,
+                            seconds=3,
+                        )
+
+                if now < next_close:
+                    minutes_remaining = (next_close - now).total_seconds() / 60
+                    log_data.debug(
+                        "Boundary cache HIT: next completed 1H candle due at %s (in %.1f min). "
+                        "Returning %d cached candles.",
+                        next_close.strftime("%H:%M:%S"),
+                        minutes_remaining,
+                        len(self._spot_candles),
+                    )
+                    return self._spot_candles
 
         lookback_days = CONFIG["sma_lookback_days"]
         from_date = (now - timedelta(days=lookback_days + 5)).strftime(
@@ -75,9 +101,11 @@ class DataManager:
                 )
 
                 if candles:
-                    self._spot_candles = candles
-                    self._last_fetch_boundary = now
-                    self._calculate_sma()
+                    # Drop the currently forming candle so cache contains ONLY completed bars
+                    completed = self._drop_incomplete_candle(candles)
+                    if completed:
+                        self._spot_candles = completed
+                        self._calculate_sma()
 
                 return self._spot_candles
 
@@ -94,6 +122,38 @@ class DataManager:
                         max_retries, e, len(self._spot_candles),
                     )
                     return self._spot_candles
+
+    def _drop_incomplete_candle(self, candles: List[Dict]) -> List[Dict]:
+        """
+        Drop the last candle if it belongs to the currently-forming window.
+        A 1H candle starting at 09:15 closes at 10:15.
+        The 15:15 candle closes at 15:30 (session end).
+        """
+        if not candles:
+            return candles
+
+        now = now_ist()
+        last_candle_time = candles[-1]["date"]
+        if not hasattr(last_candle_time, "tzinfo") or last_candle_time.tzinfo is None:
+            last_candle_time = last_candle_time.replace(tzinfo=IST)
+        else:
+            last_candle_time = last_candle_time.astimezone(IST)
+
+        if last_candle_time.time() == dtime(15, 15):
+            candle_close = last_candle_time + timedelta(minutes=15)
+        else:
+            candle_close = last_candle_time + timedelta(minutes=CONFIG["candle_tf_minutes"])
+
+        if now < candle_close:
+            log_data.debug(
+                "Dropping forming candle: %s (closes at %s, now=%s)",
+                last_candle_time.strftime("%Y-%m-%d %H:%M:%S"),
+                candle_close.strftime("%H:%M:%S"),
+                now.strftime("%H:%M:%S"),
+            )
+            return candles[:-1]
+
+        return candles
 
     def _calculate_sma(self) -> None:
         """
@@ -121,34 +181,19 @@ class DataManager:
 
     def get_completed_candles(self) -> List[Dict]:
         """
-        Return only completed candles (exclude the currently forming bar).
-        A candle is complete if its timestamp + 60min <= now.
+        Return completed candles (cache strictly holds completed bars).
         """
-        if not self._spot_candles:
-            return []
-
-        now = now_ist()
-        completed = []
-        for c in self._spot_candles:
-            candle_time = c["date"]
-            if not hasattr(candle_time, "tzinfo") or candle_time.tzinfo is None:
-                candle_time = candle_time.replace(tzinfo=IST)
-            candle_close_time = candle_time + timedelta(minutes=CONFIG["candle_tf_minutes"])
-            if candle_close_time <= now:
-                completed.append(c)
-
-        return completed
+        return self._spot_candles
 
     def has_new_completed_candle(self) -> bool:
         """
         Returns True if the latest completed candle has a different
         timestamp than the last one we processed.
         """
-        completed = self.get_completed_candles()
-        if not completed:
+        if not self._spot_candles:
             return False
 
-        latest_time = completed[-1]["date"]
+        latest_time = self._spot_candles[-1]["date"]
         if self._last_candle_time is None or latest_time != self._last_candle_time:
             return True
         return False
