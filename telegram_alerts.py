@@ -60,7 +60,7 @@ class TelegramAlerter:
         return text
 
     def _send_sync(self, text: str) -> None:
-        """Send a Telegram message synchronously. Logs error if it fails."""
+        """Send a Telegram message synchronously. Logs error if it fails with fallback to plain text."""
         if not self._enabled:
             return
         try:
@@ -76,11 +76,21 @@ class TelegramAlerter:
             )
             if resp.status_code != 200:
                 _log.warning(
-                    "Telegram API rejected message (HTTP %s): %s",
+                    "Telegram API rejected MarkdownV2 (HTTP %s): %s. Retrying with plain-text fallback...",
                     resp.status_code, resp.text,
+                )
+                plain_text = text.replace("\\", "").replace("*", "").replace("`", "")
+                requests.post(
+                    url,
+                    json={
+                        "chat_id": self._chat_id,
+                        "text": plain_text,
+                    },
+                    timeout=10,
                 )
         except Exception as exc:
             _log.warning("Telegram send failed (non-critical): %s", exc)
+
 
     def _send_async(self, text: str) -> None:
         """Fire-and-forget: send message in a background daemon thread."""

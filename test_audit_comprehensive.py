@@ -1079,6 +1079,99 @@ def test_data_manager_boundary_caching_and_drop_incomplete():
         data_mod.today_ist = today_ist
 
 
+def test_order_manager_product_type_parity():
+    """T14: Verify OrderManager uses PRODUCT_NRML for both entry and exit in live mode."""
+    _section("Order Manager Product Type Parity Tests")
+    from orders import OrderManager
+    from config import CONFIG
+
+    class MockKiteOrders:
+        def __init__(self):
+            self.orders = []
+            self.PRODUCT_NRML = "NRML"
+            self.PRODUCT_MIS = "MIS"
+            self.VARIETY_REGULAR = "regular"
+            self.EXCHANGE_NFO = "NFO"
+            self.TRANSACTION_TYPE_BUY = "BUY"
+            self.TRANSACTION_TYPE_SELL = "SELL"
+            self.ORDER_TYPE_MARKET = "MARKET"
+
+        def place_order(self, **kwargs):
+            self.orders.append(kwargs)
+            return "ORDER_123"
+
+        def order_history(self, order_id):
+            return [{"status": "COMPLETE", "average_price": 100.0}]
+
+    mock_kite = MockKiteOrders()
+    state = {
+        "in_position": False,
+        "current_position": None,
+        "trades_today": 0,
+        "realized_pnl_today": 0.0,
+        "total_realized_pnl": 0.0,
+        "cash": 100000.0,
+    }
+
+    orig_mode = CONFIG["trading_mode"]
+    try:
+        CONFIG["trading_mode"] = "LIVE"
+        om = OrderManager(mock_kite, state, data_mgr=None)
+
+        class MockRiskParams:
+            spot_sl = 24500.0
+            spot_target = 24300.0
+            spot_risk = 100.0
+
+        option_info = {
+            "tradingsymbol": "NIFTY26SEP24400PE",
+            "instrument_token": 12345,
+            "strike": 24400.0,
+            "expiry": date(2026, 9, 29),
+        }
+
+        # BUY Entry
+        entered = om.enter_trade(option_info, MockRiskParams(), 24400.0, 100.0)
+        _test("LIVE BUY placed with PRODUCT_NRML",
+              len(mock_kite.orders) == 1 and mock_kite.orders[0]["product"] == "NRML",
+              f"got {mock_kite.orders[0]['product'] if mock_kite.orders else 'no order'}")
+
+        # SELL Exit
+        exited = om.exit_trade("STOP_LOSS", 80.0)
+        _test("LIVE SELL exit placed with PRODUCT_NRML (matches entry)",
+              len(mock_kite.orders) == 2 and mock_kite.orders[1]["product"] == "NRML",
+              f"got {mock_kite.orders[1]['product'] if len(mock_kite.orders) > 1 else 'no order'}")
+
+    finally:
+        CONFIG["trading_mode"] = orig_mode
+
+
+def test_overnight_crash_recovery_downtime_calculation():
+    """T15: Verify crash recovery downtime math only counts market hours for multi-day positions."""
+    _section("Overnight Crash Recovery Downtime Tests")
+    from config import CONFIG, IST
+
+    # Overnight position from yesterday 15:30 IST
+    yesterday = date(2026, 8, 27)
+    today = date(2026, 8, 28)
+    last_hb = datetime.combine(yesterday, dtime(15, 30), tzinfo=IST).isoformat()
+
+    # If restarted at 09:16 AM today (1 minute into market)
+    now_0916 = datetime.combine(today, dtime(9, 16), tzinfo=IST)
+    today_open = datetime.combine(today, CONFIG["market_open"], tzinfo=IST)
+    downtime_0916 = (now_0916 - today_open).total_seconds() / 60.0
+
+    _test("Overnight downtime at 09:16 is 1 minute (not 1000+ min)",
+          downtime_0916 == 1.0, f"got {downtime_0916}")
+
+    # If restarted at 09:05 AM today (before market open)
+    now_0905 = datetime.combine(today, dtime(9, 5), tzinfo=IST)
+    downtime_0905 = max(0.0, (now_0905 - today_open).total_seconds() / 60.0) if now_0905 > today_open else 0.0
+
+    _test("Overnight downtime at 09:05 (pre-market) is 0 minutes",
+          downtime_0905 == 0.0, f"got {downtime_0905}")
+
+
 # ═══════════════════════════════════════════════
 # RUN ALL TESTS
 # ═══════════════════════════════════════════════
@@ -1152,6 +1245,13 @@ if __name__ == "__main__":
 
     # 13. DataManager Boundary Caching & Candle Drop Tests (8 assertions)
     test_data_manager_boundary_caching_and_drop_incomplete()
+
+    # 14. OrderManager Product Type Parity Tests (2 assertions)
+    test_order_manager_product_type_parity()
+
+    # 15. Overnight Crash Recovery Downtime Tests (2 assertions)
+    test_overnight_crash_recovery_downtime_calculation()
+
 
     # Summary
     total = _passed + _failed

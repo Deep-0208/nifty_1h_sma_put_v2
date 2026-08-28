@@ -193,7 +193,7 @@ def perform_auto_login() -> str:
     )
 
 
-def create_kite_session() -> KiteConnect:
+def create_kite_session(on_token_refreshed=None) -> KiteConnect:
     """
     Initialize KiteConnect with credentials from .env.
     1. Try the saved ACCESS_TOKEN first.
@@ -216,6 +216,11 @@ def create_kite_session() -> KiteConnect:
             new_token = perform_auto_login()
             kite.set_access_token(new_token)
             log.info("✅ Re-authentication successful! Resuming operations.")
+            if on_token_refreshed is not None:
+                try:
+                    on_token_refreshed(new_token)
+                except Exception as cb_err:
+                    log.error("Token refresh callback error: %s", cb_err)
         except Exception as e:
             log.critical("🚨 Mid-day re-authentication FAILED: %s", e)
 

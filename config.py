@@ -217,6 +217,85 @@ def setup_logging() -> logging.Logger:
     return root_logger
 
 
+def rotate_daily_logs(target_date: date = None) -> None:
+    """Rotate file handlers to the current/target date log directory."""
+    if target_date is None:
+        target_date = today_ist()
+
+    daily_log_dir = LOG_DIR / target_date.isoformat()
+    daily_log_dir.mkdir(exist_ok=True)
+
+    # Close and remove old file handlers from root logger
+    root_logger = logging.getLogger(LOGGER_NAME)
+    for h in list(root_logger.handlers):
+        if isinstance(h, (logging.FileHandler, RotatingFileHandler)):
+            h.close()
+            root_logger.removeHandler(h)
+
+    _add_file_handler(root_logger, "strategy.log", daily_log_dir, level=logging.INFO, include_module=True)
+    _add_file_handler(root_logger, "debug.log", daily_log_dir, level=logging.DEBUG, include_module=True)
+
+    # Trades logger
+    trades_logger = logging.getLogger(f"{LOGGER_NAME}.trades")
+    for h in list(trades_logger.handlers):
+        if isinstance(h, (logging.FileHandler, RotatingFileHandler)):
+            h.close()
+            trades_logger.removeHandler(h)
+
+    class TradeFilter(logging.Filter):
+        def filter(self, record):
+            return record.name == f"{LOGGER_NAME}.trades"
+
+    trades_fh = RotatingFileHandler(
+        daily_log_dir / "trades.log",
+        maxBytes=CONFIG["log_max_bytes"],
+        backupCount=CONFIG["log_backup_count"],
+        encoding="utf-8",
+    )
+    trades_fh.setLevel(logging.INFO)
+    trades_fh.setFormatter(_make_formatter(include_module=True))
+    trades_fh.addFilter(TradeFilter())
+    trades_logger.addHandler(trades_fh)
+
+    # Candles logger
+    candles_logger = logging.getLogger(f"{LOGGER_NAME}.candles")
+    for h in list(candles_logger.handlers):
+        if isinstance(h, logging.FileHandler):
+            h.close()
+            candles_logger.removeHandler(h)
+
+    candles_fh = logging.FileHandler(
+        daily_log_dir / "candles.csv",
+        mode="a",
+        encoding="utf-8",
+    )
+    candles_fh.setLevel(logging.INFO)
+    candles_fh.setFormatter(logging.Formatter("%(message)s"))
+    candles_logger.addHandler(candles_fh)
+
+    candles_csv = daily_log_dir / "candles.csv"
+    if not candles_csv.exists() or candles_csv.stat().st_size == 0:
+        candles_logger.info(
+            "timestamp,type,symbol,open,high,low,close,sma_20,sma_50,is_red,below_sma20,below_sma50"
+        )
+
+    # Network logger
+    network_logger = logging.getLogger(f"{LOGGER_NAME}.network")
+    for h in list(network_logger.handlers):
+        if isinstance(h, (logging.FileHandler, RotatingFileHandler)):
+            h.close()
+            network_logger.removeHandler(h)
+    _add_file_handler(network_logger, "network.log", daily_log_dir, level=logging.DEBUG, include_module=True)
+
+    for noisy_name in ("urllib3", "requests", "kiteconnect.ticker"):
+        noisy = logging.getLogger(noisy_name)
+        for h in list(noisy.handlers):
+            if isinstance(h, (logging.FileHandler, RotatingFileHandler)):
+                h.close()
+                noisy.removeHandler(h)
+        _add_file_handler(noisy, "network.log", daily_log_dir, level=logging.DEBUG, include_module=True)
+
+
 # -- Initialize logging on import --
 log = setup_logging()
 

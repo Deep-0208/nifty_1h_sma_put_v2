@@ -110,16 +110,32 @@ def _crash_recovery(
         symbol, entry_premium, last_hb,
     )
 
-    # Calculate downtime
-    downtime_minutes = 999
+    # Calculate downtime strictly during market hours
+    downtime_minutes = 0.0
+    now = now_ist()
     if last_hb:
         try:
             last_hb_dt = datetime.fromisoformat(last_hb)
-            downtime_minutes = (now_ist() - last_hb_dt).total_seconds() / 60
-        except (ValueError, TypeError):
-            pass
+            if not hasattr(last_hb_dt, "tzinfo") or last_hb_dt.tzinfo is None:
+                last_hb_dt = last_hb_dt.replace(tzinfo=IST)
+            else:
+                last_hb_dt = last_hb_dt.astimezone(IST)
 
-    log.warning("Calculated downtime: %.1f minutes.", downtime_minutes)
+            if last_hb_dt.date() == now.date():
+                # Same day crash: elapsed minutes since last heartbeat
+                downtime_minutes = max(0.0, (now - last_hb_dt).total_seconds() / 60.0)
+            else:
+                # Carried overnight: market was closed overnight.
+                # Downtime during today's session is elapsed time since today's market open (09:15)
+                today_market_open = datetime.combine(now.date(), CONFIG["market_open"], tzinfo=IST)
+                if now > today_market_open:
+                    downtime_minutes = max(0.0, (now - today_market_open).total_seconds() / 60.0)
+                else:
+                    downtime_minutes = 0.0
+        except (ValueError, TypeError):
+            downtime_minutes = 999.0
+
+    log.warning("Calculated downtime during market hours: %.1f minutes.", downtime_minutes)
 
     # LIVE mode: query broker for actual position
     if CONFIG["trading_mode"] == "LIVE":
@@ -412,6 +428,7 @@ def main():
     # 9. WebSocket setup
     ws_connected = threading.Event()
     last_data_time = [now_ist()]  # mutable container for closure
+    kws_ref = [None]
 
     def on_ticks(ws, ticks):
         """Process incoming WebSocket ticks for NIFTY Spot."""
@@ -446,14 +463,31 @@ def main():
     def on_error(ws, code, reason):
         log.error("WebSocket error: code=%s, reason=%s", code, reason)
 
-    kws = KiteTicker(kite.api_key, kite.access_token)
-    kws.on_ticks = on_ticks
-    kws.on_connect = on_connect
-    kws.on_close = on_close
-    kws.on_error = on_error
+    def start_or_restart_kws(new_token: str = None):
+        """Thread-safe start or reconnect of KiteTicker WebSocket."""
+        try:
+            if kws_ref[0] is not None:
+                try:
+                    kws_ref[0].close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
-    kws.connect(threaded=True)
-    log.info("WebSocket thread started.")
+        token = new_token or kite.access_token
+        try:
+            new_kws = KiteTicker(kite.api_key, token)
+            new_kws.on_ticks = on_ticks
+            new_kws.on_connect = on_connect
+            new_kws.on_close = on_close
+            new_kws.on_error = on_error
+            new_kws.connect(threaded=True)
+            kws_ref[0] = new_kws
+            log.info("KiteTicker WebSocket started with active access token.")
+        except Exception as ws_err:
+            log.error("Failed to start KiteTicker WebSocket: %s", ws_err)
+
+    start_or_restart_kws()
 
     # 10. Main market loop
     last_heartbeat = time.time()
@@ -466,16 +500,22 @@ def main():
             current_time = now.time()
             current_date = now.date()
 
-            # Date rollover check (for continuous 24/7 overnight runs)
+            # Date rollover check (for multi-day safety if left running)
             if current_date != last_rollover_date:
                 log.info(
                     "Date rollover: %s -> %s. Resetting daily counters. Preserving open position.",
                     last_rollover_date, current_date,
                 )
                 if analytics:
-                    analytics.generate_daily_summary(state.get("cash", CONFIG["starting_capital"]))
-                    analytics = AnalyticsEngine(current_date, state.get("cash", CONFIG["starting_capital"]))
-                    order_mgr.analytics = analytics
+                    try:
+                        analytics.generate_daily_summary(state.get("cash", CONFIG["starting_capital"]))
+                    except Exception:
+                        pass
+                    try:
+                        analytics = AnalyticsEngine(current_date, state.get("cash", CONFIG["starting_capital"]))
+                        order_mgr.analytics = analytics
+                    except Exception:
+                        pass
 
                 state["trades_today"] = 0
                 state["realized_pnl_today"] = 0.0
@@ -503,55 +543,28 @@ def main():
                         order_mgr.exit_trade("EXPIRY_DAY_SQUAREOFF", exit_premium)
                 _expiry_exit_done = True
 
-            # Day summary and overnight sleep after market close (15:30 IST)
+            # Day summary and clean exit after market close (15:30 IST)
             if current_time >= CONFIG["market_close"]:
-                log.info("Market closed for the day.")
-                if analytics:
-                    analytics.generate_daily_summary(state.get("cash", CONFIG["starting_capital"]))
-
-                tg.day_summary(
-                    state.get("trades_today", 0),
-                    state.get("realized_pnl_today", 0.0),
-                    state.get("total_realized_pnl", 0.0),
-                    state.get("cash", 0.0),
-                )
-                # Sleep until next market open
-                log.info("Sleeping until next market open (09:05 IST)...")
-                while now_ist().time() >= CONFIG["market_close"] or \
-                      now_ist().time() < CONFIG["market_open"]:
-                    time.sleep(60)
-
-                # Next morning open: immediately check Spot LTP for open position gap
-                if state.get("in_position"):
-                    log.info("🌅 Market opened. Checking Spot LTP for overnight gap on open position...")
-                    morning_spot = data_mgr.fetch_spot_ltp()
-                    if morning_spot is not None:
-                        with trade_lock:
-                            gap_exit = order_mgr.check_exit_conditions_with_spot_ltp(morning_spot)
-                            if gap_exit:
-                                log.warning("Overnight gap triggered exit: %s (Spot=%.2f)", gap_exit, morning_spot)
-                                symbol = state["current_position"]["tradingsymbol"]
-                                exit_premium = data_mgr.fetch_option_ltp(symbol)
-                                order_mgr.exit_trade(gap_exit, exit_premium)
-                continue
+                log.info("Market closed for the day (15:30 IST).")
+                save_state(state)
+                log.info("Session complete. Exiting cleanly (launcher will restart fresh at 09:05 IST tomorrow).")
+                break
 
             # Wait for market open
             if current_time < CONFIG["market_open"]:
                 _smart_sleep(False)
                 continue
 
-            # If in position, WebSocket handles exits.
+            # If in position, monitor exits (WebSocket primary, REST proactive fallback)
             if state.get("in_position"):
                 if time.time() - last_heartbeat >= 60:
                     order_mgr.update_heartbeat()
                     last_heartbeat = time.time()
 
                 data_age = (now_ist() - last_data_time[0]).total_seconds()
-                if data_age > CONFIG["data_unavailable_exit_s"]:
-                    log.error(
-                        "DATA UNAVAILABLE for %.0fs. Force square-off.",
-                        data_age,
-                    )
+
+                # Proactive fallback: If WebSocket tick is stale (> ws_stale_threshold_s), fetch REST Spot LTP
+                if data_age > CONFIG["ws_stale_threshold_s"]:
                     rest_ltp = data_mgr.fetch_spot_ltp()
                     if rest_ltp is not None:
                         last_data_time[0] = now_ist()
@@ -562,12 +575,18 @@ def main():
                                 exit_premium = data_mgr.fetch_option_ltp(symbol)
                                 order_mgr.exit_trade(exit_reason, exit_premium)
                     else:
-                        with trade_lock:
-                            if state.get("in_position"):
-                                symbol = state["current_position"]["tradingsymbol"]
-                                tg.data_unavailable(symbol, data_age)
-                                exit_premium = data_mgr.fetch_option_ltp(symbol)
-                                order_mgr.exit_trade("DATA_UNAVAILABLE", exit_premium)
+                        # REST failed too: check if total data outage exceeded critical threshold
+                        if data_age > CONFIG["data_unavailable_exit_s"]:
+                            log.critical(
+                                "CRITICAL: DATA UNAVAILABLE for %.0fs from both WebSocket and REST! Emergency square-off.",
+                                data_age,
+                            )
+                            with trade_lock:
+                                if state.get("in_position"):
+                                    symbol = state["current_position"]["tradingsymbol"]
+                                    tg.data_unavailable(symbol, data_age)
+                                    exit_premium = data_mgr.fetch_option_ltp(symbol)
+                                    order_mgr.exit_trade("DATA_UNAVAILABLE", exit_premium)
 
                 _smart_sleep(True)
                 continue
@@ -707,8 +726,17 @@ def main():
 
     finally:
         log.info("Strategy shutdown complete.")
+        try:
+            if kws_ref[0] is not None:
+                kws_ref[0].close()
+        except Exception:
+            pass
+
         if analytics:
-            analytics.generate_daily_summary(state.get("cash", CONFIG["starting_capital"]))
+            try:
+                analytics.generate_daily_summary(state.get("cash", CONFIG["starting_capital"]))
+            except Exception:
+                pass
 
         tg.day_summary(
             state.get("trades_today", 0),
@@ -716,6 +744,7 @@ def main():
             state.get("total_realized_pnl", 0.0),
             state.get("cash", 0.0),
         )
+
 
 
 if __name__ == "__main__":
