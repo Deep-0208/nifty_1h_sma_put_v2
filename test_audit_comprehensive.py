@@ -1114,6 +1114,12 @@ def test_order_manager_product_type_parity():
     }
 
     orig_mode = CONFIG["trading_mode"]
+    import orders as orders_mod
+    orig_save = orders_mod.save_state
+    orig_journal = orders_mod.append_trade_journal
+    orders_mod.save_state = lambda s: None
+    orders_mod.append_trade_journal = lambda r: None
+
     try:
         CONFIG["trading_mode"] = "LIVE"
         om = OrderManager(mock_kite, state, data_mgr=None)
@@ -1144,6 +1150,8 @@ def test_order_manager_product_type_parity():
 
     finally:
         CONFIG["trading_mode"] = orig_mode
+        orders_mod.save_state = orig_save
+        orders_mod.append_trade_journal = orig_journal
 
 
 def test_overnight_crash_recovery_downtime_calculation():
