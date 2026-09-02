@@ -333,17 +333,20 @@ def test_adversarial_non_weekly_rejection():
     im = InstrumentManager(FakeKite())
     im._nifty_puts = puts
 
-    candidates = im._get_weekly_expiry_candidates()
-    
-    _test("Adversarial: Non-weekly earlier expiry (2026-08-28) strictly rejected",
-          d_non_weekly not in candidates,
-          f"candidates were: {candidates}")
-
-    _test("Adversarial: Weekly expiries retained",
-          d_weekly_1 in candidates and d_weekly_2 in candidates)
-
+    import data as data_mod
     orig_pref = CONFIG.get("expiry_preference")
+    orig_today = data_mod.today_ist
     try:
+        data_mod.today_ist = lambda: date(2026, 8, 25)
+        candidates = im._get_weekly_expiry_candidates()
+        
+        _test("Adversarial: Non-weekly earlier expiry (2026-08-28) strictly rejected",
+              d_non_weekly not in candidates,
+              f"candidates were: {candidates}")
+
+        _test("Adversarial: Weekly expiries retained",
+              d_weekly_1 in candidates and d_weekly_2 in candidates)
+
         CONFIG["expiry_preference"] = "weekly"
         im._resolve_target_expiry()
         _test("Adversarial: Target expiry resolves to intended weekly (2026-09-01)",
@@ -351,6 +354,7 @@ def test_adversarial_non_weekly_rejection():
               f"got {im.get_target_expiry()}")
     finally:
         CONFIG["expiry_preference"] = orig_pref
+        data_mod.today_ist = orig_today
 
 
 def test_monthly_collision_and_holiday_shift():
@@ -358,6 +362,7 @@ def test_monthly_collision_and_holiday_shift():
     _section("Monthly Collision & Holiday Shift Tests")
     from data import InstrumentManager
     from config import CONFIG
+    import data as data_mod
 
     class FakeKite:
         def instruments(self, segment):
@@ -386,7 +391,9 @@ def test_monthly_collision_and_holiday_shift():
     im._nifty_puts = puts
     
     orig_pref = CONFIG.get("expiry_preference")
+    orig_today = data_mod.today_ist
     try:
+        data_mod.today_ist = lambda: date(2026, 8, 25)
         CONFIG["expiry_preference"] = "weekly"
         candidates = im._get_weekly_expiry_candidates()
 
@@ -397,6 +404,7 @@ def test_monthly_collision_and_holiday_shift():
               d_month_end in candidates)
     finally:
         CONFIG["expiry_preference"] = orig_pref
+        data_mod.today_ist = orig_today
 
 
 def test_0dte_selection():
@@ -484,8 +492,11 @@ def test_liquidity_fallback_and_fail_closed():
     im = InstrumentManager(FakeKite())
     im._nifty_puts = puts
 
+    import data as data_mod
     orig_pref = CONFIG.get("expiry_preference")
+    orig_today = data_mod.today_ist
     try:
+        data_mod.today_ist = lambda: date(2026, 8, 25)
         CONFIG["expiry_preference"] = "weekly"
         im._resolve_target_expiry()
 
@@ -514,6 +525,7 @@ def test_liquidity_fallback_and_fail_closed():
               failed_closed and im_fail.get_target_expiry() is None)
     finally:
         CONFIG["expiry_preference"] = orig_pref
+        data_mod.today_ist = orig_today
 
 
 def test_exact_atm_contract_enforcement():
@@ -521,6 +533,7 @@ def test_exact_atm_contract_enforcement():
     _section("Exact ATM Contract Enforcement Tests")
     from data import InstrumentManager
     from config import CONFIG
+    import data as data_mod
 
     class FakeKite:
         def instruments(self, segment):
@@ -541,7 +554,9 @@ def test_exact_atm_contract_enforcement():
     im._nifty_puts = puts
 
     orig_pref = CONFIG.get("expiry_preference")
+    orig_today = data_mod.today_ist
     try:
+        data_mod.today_ist = lambda: date(2026, 8, 25)
         CONFIG["expiry_preference"] = "weekly"
         im._resolve_target_expiry()
 
@@ -560,6 +575,7 @@ def test_exact_atm_contract_enforcement():
               im.get_target_expiry() == d_target)
     finally:
         CONFIG["expiry_preference"] = orig_pref
+        data_mod.today_ist = orig_today
 
 
 # ═══════════════════════════════════════════════
@@ -685,6 +701,40 @@ def test_exit_not_in_position():
     om = OrderManager(FakeKite(), state, FakeData())
     result = om.check_exit_conditions_with_spot_ltp(24500)
     _test("Not in position -> None", result is None, f"got {result}")
+
+
+def test_pre_market_tick_exit_blocked():
+    """T36B: Ticks arriving outside market hours (before 09:15) must NEVER trigger exits."""
+    import main as main_mod
+    from main import _is_market_hours
+    from config import CONFIG
+    import config as cfg_mod
+
+    # 1. Market hours helper check at 09:05 IST (pre-market boot)
+    pre_market_time = datetime(2026, 9, 2, 9, 5, 0, tzinfo=IST)
+    market_open_time = datetime(2026, 9, 2, 9, 15, 0, tzinfo=IST)
+    post_market_time = datetime(2026, 9, 2, 15, 35, 0, tzinfo=IST)
+
+    orig_cfg_now = cfg_mod.now_ist
+    orig_main_now = main_mod.now_ist
+    try:
+        cfg_mod.now_ist = lambda: pre_market_time
+        main_mod.now_ist = lambda: pre_market_time
+        _test("Pre-market at 09:05 is outside market hours",
+              not _is_market_hours())
+
+        cfg_mod.now_ist = lambda: market_open_time
+        main_mod.now_ist = lambda: market_open_time
+        _test("Market open at 09:15 is inside market hours",
+              _is_market_hours())
+
+        cfg_mod.now_ist = lambda: post_market_time
+        main_mod.now_ist = lambda: post_market_time
+        _test("Post-market at 15:35 is outside market hours",
+              not _is_market_hours())
+    finally:
+        cfg_mod.now_ist = orig_cfg_now
+        main_mod.now_ist = orig_main_now
 
 
 # ═══════════════════════════════════════════════
@@ -1117,8 +1167,15 @@ def test_order_manager_product_type_parity():
     import orders as orders_mod
     orig_save = orders_mod.save_state
     orig_journal = orders_mod.append_trade_journal
+    orig_tg = getattr(orders_mod, "tg", None)
+
+    class MockTelegram:
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+
     orders_mod.save_state = lambda s: None
     orders_mod.append_trade_journal = lambda r: None
+    orders_mod.tg = MockTelegram()
 
     try:
         CONFIG["trading_mode"] = "LIVE"
@@ -1152,6 +1209,8 @@ def test_order_manager_product_type_parity():
         CONFIG["trading_mode"] = orig_mode
         orders_mod.save_state = orig_save
         orders_mod.append_trade_journal = orig_journal
+        if orig_tg is not None:
+            orders_mod.tg = orig_tg
 
 
 def test_overnight_crash_recovery_downtime_calculation():
@@ -1221,12 +1280,13 @@ if __name__ == "__main__":
     test_liquidity_fallback_and_fail_closed()
     test_exact_atm_contract_enforcement()
 
-    # 6. Exit Condition Tests (7 assertions across 5 functions)
+    # 6. Exit Condition Tests (10 assertions across 6 functions)
     test_exit_sl()
     test_exit_target()
     test_exit_no_trigger()
     test_exit_sl_priority()
     test_exit_not_in_position()
+    test_pre_market_tick_exit_blocked()
 
     # 7. State Tests (7 assertions across 2 functions)
     test_state_atomic_save_load()

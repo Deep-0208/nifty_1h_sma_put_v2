@@ -441,9 +441,13 @@ def main():
                 data_mgr.update_spot_ltp(ltp)
                 last_data_time[0] = now_ist()
 
-                # Check exit conditions if in position
+                # Check exit conditions if in position (strictly during active market hours: 09:15 - 15:30 IST)
                 if state.get("in_position"):
+                    if not _is_market_hours():
+                        continue
                     with trade_lock:
+                        if not state.get("in_position"):
+                            continue
                         exit_reason = order_mgr.check_exit_conditions_with_spot_ltp(ltp)
                         if exit_reason:
                             symbol = state["current_position"]["tradingsymbol"]

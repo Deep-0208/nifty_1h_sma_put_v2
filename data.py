@@ -24,6 +24,7 @@ class DataManager:
         self._cached_spot_ltp: Optional[float] = None
         self._spot_ltp_updated_at: Optional[datetime] = None
         self._fetch_count: int = 0
+        self._last_boundary_logged: Optional[datetime] = None
 
     def fetch_spot_candles(self, count: int = 120, force_refresh: bool = False) -> List[Dict]:
         """
@@ -62,14 +63,15 @@ class DataManager:
                         )
 
                 if now < next_close:
-                    minutes_remaining = (next_close - now).total_seconds() / 60
-                    log_data.debug(
-                        "Boundary cache HIT: next completed 1H candle due at %s (in %.1f min). "
-                        "Returning %d cached candles.",
-                        next_close.strftime("%H:%M:%S"),
-                        minutes_remaining,
-                        len(self._spot_candles),
-                    )
+                    if self._last_boundary_logged != next_close:
+                        mins_left = (next_close - now).total_seconds() / 60
+                        log_data.debug(
+                            "⏳ Boundary cache active: holding %d bars | Next 1H bar due at %s (in %.1fm)",
+                            len(self._spot_candles),
+                            next_close.strftime("%H:%M:%S"),
+                            mins_left,
+                        )
+                        self._last_boundary_logged = next_close
                     return self._spot_candles
 
         lookback_days = CONFIG["sma_lookback_days"]
@@ -94,6 +96,7 @@ class DataManager:
                     interval=CONFIG["candle_tf"],
                 )
                 self._fetch_count += 1
+                self._last_boundary_logged = None
 
                 log_data.info(
                     "Fetched %d Spot 1H candles (total API calls: %d)",
@@ -178,6 +181,18 @@ class DataManager:
                 candle["sma_50"] = sum(window) / len(window)
             else:
                 candle["sma_50"] = None
+
+        if self._spot_candles:
+            last = self._spot_candles[-1]
+            s20 = last.get("sma_20")
+            s50 = last.get("sma_50")
+            log_data.debug(
+                "📈 Computed SMAs across %d completed bars | Latest C=%.2f, SMA20=%s, SMA50=%s",
+                len(self._spot_candles),
+                last["close"],
+                f"{s20:.2f}" if s20 is not None else "None",
+                f"{s50:.2f}" if s50 is not None else "None",
+            )
 
     def get_completed_candles(self) -> List[Dict]:
         """
