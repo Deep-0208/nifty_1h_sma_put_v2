@@ -308,6 +308,11 @@ class OrderManager:
         if self.state.get("in_position") and self.state.get("current_position"):
             self.state["current_position"]["last_heartbeat"] = now_ist().isoformat()
             save_state(self.state)
+            log_orders.debug(
+                "💓 Heartbeat saved: %s | last_hb=%s",
+                self.state["current_position"].get("tradingsymbol", "?"),
+                self.state["current_position"]["last_heartbeat"],
+            )
 
     def _confirm_order_fill(
         self, order_id: str, symbol: str,

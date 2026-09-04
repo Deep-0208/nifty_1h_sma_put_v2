@@ -495,6 +495,9 @@ def main():
 
     # 10. Main market loop
     last_heartbeat = time.time()
+    last_pos_status_log = 0.0
+    last_pre_market_log = 0.0
+    last_scan_status_log = 0.0
     last_rollover_date = today_ist()
     _expiry_exit_done = False
 
@@ -556,6 +559,13 @@ def main():
 
             # Wait for market open
             if current_time < CONFIG["market_open"]:
+                if time.time() - last_pre_market_log >= 60.0:
+                    log.info(
+                        "⏳ Pre-market wait: Market opens at %s IST. Current time: %s",
+                        CONFIG["market_open"].strftime("%H:%M"),
+                        current_time.strftime("%H:%M:%S"),
+                    )
+                    last_pre_market_log = time.time()
                 _smart_sleep(False)
                 continue
 
@@ -566,6 +576,21 @@ def main():
                     last_heartbeat = time.time()
 
                 data_age = (now_ist() - last_data_time[0]).total_seconds()
+
+                # Periodic in-position status log every 3 minutes
+                if time.time() - last_pos_status_log >= 180.0:
+                    pos = state.get("current_position", {})
+                    sym = pos.get("tradingsymbol", "?")
+                    entry_p = pos.get("entry_premium", 0.0)
+                    s_sl = pos.get("spot_sl", 0.0)
+                    s_tgt = pos.get("spot_target", 0.0)
+                    cur_spot = data_mgr.get_cached_spot_ltp(max_age_seconds=60) or data_mgr.fetch_spot_ltp()
+                    cur_spot_str = f"₹{cur_spot:,.2f}" if cur_spot else "N/A"
+                    log.info(
+                        "💓 Monitoring Position: %s (Entry: ₹%.2f) | Spot LTP: %s | SL: %.2f | Target: %.2f | WS Age: %.1fs",
+                        sym, entry_p, cur_spot_str, s_sl, s_tgt, data_age,
+                    )
+                    last_pos_status_log = time.time()
 
                 # Proactive fallback: If WebSocket tick is stale (> ws_stale_threshold_s), fetch REST Spot LTP
                 if data_age > CONFIG["ws_stale_threshold_s"]:
@@ -605,6 +630,14 @@ def main():
             completed = data_mgr.get_completed_candles()
 
             if not data_mgr.has_new_completed_candle():
+                if time.time() - last_scan_status_log >= 300.0:
+                    cached_spot = data_mgr.get_cached_spot_ltp(max_age_seconds=60) or data_mgr.fetch_spot_ltp()
+                    spot_str = f"₹{cached_spot:,.2f}" if cached_spot else "N/A"
+                    log.info(
+                        "🔍 Monitoring 1H candle close (next boundary near :15) | Spot LTP: %s | Completed 1H bars: %d",
+                        spot_str, len(completed),
+                    )
+                    last_scan_status_log = time.time()
                 _smart_sleep(False)
                 continue
 
