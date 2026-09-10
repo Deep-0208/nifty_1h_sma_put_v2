@@ -454,8 +454,15 @@ def main():
                             exit_premium = data_mgr.fetch_option_ltp(symbol)
                             order_mgr.exit_trade(exit_reason, exit_premium)
 
+    _has_connected_once = False
+
     def on_connect(ws, response):
-        log.info("WebSocket connected. Subscribing to NIFTY Spot (256265)...")
+        nonlocal _has_connected_once
+        if _has_connected_once:
+            log.info("🌐 WebSocket successfully reconnected.")
+        else:
+            log.info("WebSocket connected. Subscribing to NIFTY Spot (%s)...", CONFIG["nifty_instrument_token"])
+            _has_connected_once = True
         ws.subscribe([CONFIG["nifty_instrument_token"]])
         ws.set_mode(ws.MODE_LTP, [CONFIG["nifty_instrument_token"]])
         ws_connected.set()
