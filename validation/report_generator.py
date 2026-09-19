@@ -7,10 +7,16 @@ Generates structured JSON, CSV, and Markdown performance reports
 for the NIFTY 1-Hour SMA PUT Strategy.
 """
 
+import sys
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import pandas as pd
+
+# Ensure strategy root directory is in sys.path when executed directly or from subdirectories
+STRATEGY_ROOT = Path(__file__).resolve().parent.parent
+if str(STRATEGY_ROOT) not in sys.path:
+    sys.path.insert(0, str(STRATEGY_ROOT))
 
 from config import CONFIG, STRATEGY_DIR
 from validation import storage, metrics
@@ -139,6 +145,9 @@ class MonthlyReportGenerator:
 
     def generate(self) -> Optional[str]:
         """Aggregate all daily data for the month and output validation report."""
+        if not storage.DATA_DIR.exists():
+            return None
+
         # Find all daily folders matching this month
         month_days = [d for d in storage.DATA_DIR.iterdir() if d.is_dir() and d.name.startswith(self.month_str)]
         if not month_days:
@@ -192,11 +201,12 @@ class MonthlyReportGenerator:
 
 
 if __name__ == "__main__":
-    import sys
     month = sys.argv[1] if len(sys.argv) > 1 else None
     gen = MonthlyReportGenerator(month)
     rep = gen.generate()
     if rep:
-        print("Monthly validation report generated successfully.")
+        print(f"✅ Monthly validation report generated successfully for {gen.month_str}:")
+        print(f"   Saved to: {storage.MONTHLY_DIR / f'validation_report_{gen.month_str}.md'}\n")
+        print(rep)
     else:
-        print("No validation data found for month.")
+        print(f"⚠️ No validation data found for month '{gen.month_str}' in: {storage.DATA_DIR}")
