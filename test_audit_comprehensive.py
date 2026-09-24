@@ -290,6 +290,32 @@ def test_risk_target_calculation():
           f"got {result.spot_target}")
 
 
+def test_max_spot_risk_cap():
+    """T26B: max_spot_risk cap enforcement (0 = disabled, positive = capped)."""
+    from risk import calculate_spot_risk
+    from config import CONFIG
+
+    orig_cap = CONFIG.get("max_spot_risk", 0)
+    try:
+        # 1. Default (0 = disabled): 150 pts risk is valid
+        CONFIG["max_spot_risk"] = 0
+        r_disabled = calculate_spot_risk(entry_spot=24500, signal_candle_high=24650)
+        _test("max_spot_risk=0 (disabled) allows 150pt risk", r_disabled.is_valid)
+
+        # 2. Enabled (cap=120): 150 pts risk is rejected
+        CONFIG["max_spot_risk"] = 120.0
+        r_capped = calculate_spot_risk(entry_spot=24500, signal_candle_high=24650)
+        _test("max_spot_risk=120 rejects 150pt risk", not r_capped.is_valid)
+        _test("Skip reason mentions SPOT_RISK_EXCEEDS_CAP",
+              "SPOT_RISK_EXCEEDS_CAP" in r_capped.skip_reason)
+
+        # 3. Enabled (cap=120): 100 pts risk is accepted
+        r_accepted = calculate_spot_risk(entry_spot=24500, signal_candle_high=24600)
+        _test("max_spot_risk=120 accepts 100pt risk", r_accepted.is_valid)
+    finally:
+        CONFIG["max_spot_risk"] = orig_cap
+
+
 # ═══════════════════════════════════════════════
 # EXPIRY & CONTRACT SELECTION AUDIT TESTS
 # ═══════════════════════════════════════════════
@@ -1272,6 +1298,7 @@ if __name__ == "__main__":
     test_risk_zero_risk()
     test_risk_negative_entry()
     test_risk_target_calculation()
+    test_max_spot_risk_cap()
 
     # 5. Expiry & Contract Audits (11 assertions across 5 functions)
     test_adversarial_non_weekly_rejection()

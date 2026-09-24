@@ -62,6 +62,7 @@ CONFIG = {
     # Risk management
     "max_trades_per_day": 5,          # Maximum trades allowed per day
     "rr_ratio": 1.0,
+    "max_spot_risk": 0,               # Maximum spot risk points allowed per trade (0 = disabled, e.g. 120.0 to cap outlier risk)
 
     # Daily drawdown kill-switch (0 = disabled)
     "max_daily_loss": 0,

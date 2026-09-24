@@ -93,6 +93,20 @@ def calculate_spot_risk(
             direction="PE", is_valid=False, skip_reason=reason,
         )
 
+    # Max spot risk ceiling check (0 = disabled)
+    max_spot_risk = CONFIG.get("max_spot_risk", 0)
+    if max_spot_risk > 0 and spot_risk > max_spot_risk:
+        reason = (
+            f"SPOT_RISK_EXCEEDS_CAP: spot_risk={spot_risk:.2f} > "
+            f"max_spot_risk={max_spot_risk:.2f}. Setup skipped."
+        )
+        log_risk.warning("⚠️ Risk validation FAILED: %s", reason)
+        return SpotRiskParams(
+            entry_spot=entry_spot, spot_sl=spot_sl,
+            spot_target=spot_target, spot_risk=spot_risk,
+            direction="PE", is_valid=False, skip_reason=reason,
+        )
+
     log_risk.info(
         "🛡️ Spot risk calculated: entry=%.2f, SL=%.2f, target=%.2f, risk=%.2f pts (1:1 R:R in Spot points)",
         entry_spot, spot_sl, spot_target, spot_risk,
