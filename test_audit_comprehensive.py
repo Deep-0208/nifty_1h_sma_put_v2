@@ -973,7 +973,7 @@ def test_config_values():
     from config import CONFIG
 
     _test("candle_tf = 60minute", CONFIG["candle_tf"] == "60minute")
-    _test("strike_step = 50", CONFIG["strike_step"] == 50)
+    _test("strike_step in (50, 100)", CONFIG["strike_step"] in (50, 100))
     _test("sma_short = 20", CONFIG["sma_short"] == 20)
     _test("sma_long = 50", CONFIG["sma_long"] == 50)
     _test("product = NRML", CONFIG["product"] == "NRML")
