@@ -1,7 +1,7 @@
 <p align="center">
-  <h1 align="center">📈 NIFTY 1-Hour SMA PUT Strategy</h1>
+  <h1 align="center">📈 NIFTY 1-Hour SMA PUT Strategy v2</h1>
   <p align="center">
-    <strong>A production-grade, fully automated positional (carryforward) algorithmic trading bot for NIFTY 50 options</strong>
+    <strong>A production-grade, fully automated positional (carryforward) algorithmic trading bot for NIFTY 50 options (v2)</strong>
   </p>
   <p align="center">
     <a href="#strategy-overview">Strategy</a> •
@@ -24,7 +24,7 @@
 
 ## Strategy Overview
 
-This bot implements an institutional **1-Hour SMA Breakdown Strategy** on the **NIFTY 50 spot index**. When a completed 1-hour candle satisfies the bearish breakdown criteria (red candle closing below both the 20-period SMA and 50-period SMA), it automatically buys the **ATM (At-The-Money) Monthly PUT option** as a **Positional (`NRML`)** trade, carrying it overnight and managing exit triggers strictly via **Spot-Level Stop Loss and Target levels**.
+This bot implements an institutional **1-Hour SMA Breakdown Strategy (v2)** on the **NIFTY 50 spot index**. When a completed 1-hour candle satisfies the bearish breakdown criteria (red candle opening between the 20-period SMA and 50-period SMA, and closing below both SMAs), it automatically buys the **ATM (At-The-Money) Monthly PUT option** as a **Positional (`NRML`)** trade, carrying it overnight and managing exit triggers strictly via **Spot-Level Stop Loss and Target levels**.
 
 ### How It Works
 
@@ -34,13 +34,14 @@ Execution:       ATM Monthly PUT Option  →  Buy at Next Bar Open    →  Posit
 Exit Triggers:   Live NIFTY Spot WebSocket LTP (Token 256265)        →  Spot SL / Spot Target / Expiry Square-Off
 ```
 
-### Breakdown Signal Rules → Buy ATM Monthly PE
+### Breakdown Signal Rules (v2) → Buy ATM Monthly PE
 
 | Condition | Rule |
 |-----------|------|
 | **Candle Color** | Must be **red / bearish** (`Close < Open`) |
-| **SMA 20 Filter** | Completed candle `Close < SMA(20)` |
-| **SMA 50 Filter** | Completed candle `Close < SMA(50)` |
+| **Open Between SMAs** | Completed candle opens between the SMAs (`SMA(20) < Open < SMA(50)`) |
+| **SMA 20 Breakdown** | Completed candle `Close < SMA(20)` |
+| **SMA 50 Breakdown** | Completed candle `Close < SMA(50)` |
 | **Execution** | Trade entered at next bar open — Buy ATM Monthly PUT (`NRML`) |
 
 ### Risk & Exit Management

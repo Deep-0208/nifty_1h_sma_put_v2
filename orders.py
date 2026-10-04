@@ -20,11 +20,10 @@ import telegram_alerts as tg
 class OrderManager:
     """Manages PUT order placement, exit monitoring, and P&L."""
 
-    def __init__(self, kite: KiteConnect, state: Dict[str, Any], data_mgr, analytics=None):
+    def __init__(self, kite: KiteConnect, state: Dict[str, Any], data_mgr):
         self.kite = kite
         self.state = state
         self.data_mgr = data_mgr
-        self.analytics = analytics
         self._exit_lock = threading.Lock()
         self._exit_fired = False
 
@@ -34,8 +33,7 @@ class OrderManager:
         risk_params,      # SpotRiskParams
         entry_spot: float,
         entry_premium: float,
-        setup_num: int = 0,
-    ) -> bool:
+            ) -> bool:
         """
         Place a BUY MARKET order for the ATM PUT.
         """
@@ -68,6 +66,7 @@ class OrderManager:
                     quantity=qty,
                     order_type=self.kite.ORDER_TYPE_MARKET,
                     product=self.kite.PRODUCT_NRML,
+                    market_protection=CONFIG.get("market_protection", -1),
                 )
                 log_orders.info("BUY order placed: order_id=%s", order_id)
 
@@ -101,27 +100,12 @@ class OrderManager:
             "entry_time": now_ist().isoformat(),
             "entry_date": now_ist().date().isoformat(),
             "last_heartbeat": now_ist().isoformat(),
-            "setup_num": setup_num,
         }
         self.state["trades_today"] = self.state.get("trades_today", 0) + 1
         self._exit_fired = False
         save_state(self.state)
 
         # Analytics Hook
-        if self.analytics is not None:
-            self.analytics.record_trade_entry(
-                setup_num=setup_num,
-                direction="PE",
-                tradingsymbol=symbol,
-                strike=float(strike),
-                expiry=str(expiry),
-                spot_price=entry_spot,
-                spot_sl=risk_params.spot_sl,
-                spot_target=risk_params.spot_target,
-                entry_premium=actual_entry_premium,
-                qty=qty,
-            )
-
         log_trades.info(
             "🟢 ENTRY: %s | Qty: %d | Premium: ₹%.2f | Spot: %.2f | "
             "SL: %.2f | Target: %.2f | Mode: %s",
@@ -210,6 +194,7 @@ class OrderManager:
                     quantity=qty,
                     order_type=self.kite.ORDER_TYPE_MARKET,
                     product=self.kite.PRODUCT_NRML,
+                    market_protection=CONFIG.get("market_protection", -1),
                 )
                 log_orders.info("SELL order placed: order_id=%s", order_id)
 
@@ -256,14 +241,6 @@ class OrderManager:
         save_state(self.state)
 
         # Analytics Hook
-        if self.analytics is not None:
-            exit_spot = self.data_mgr.get_cached_spot_ltp() or pos.get("entry_spot", 0.0)
-            self.analytics.record_trade_exit(
-                exit_premium=actual_exit_premium,
-                spot_price_at_exit=exit_spot,
-                exit_reason=reason,
-            )
-
         log_trades.info(
             "🏁 EXIT [%s]: %s | Entry: ₹%.2f | Exit: ₹%.2f | Qty: %d | "
             "P&L: ₹%+.2f | Mode: %s",

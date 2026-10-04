@@ -29,8 +29,8 @@ def _now_ist_str() -> str:
     return datetime.now(_IST).strftime("%d %b %Y, %H:%M:%S IST")
 
 
-_log = logging.getLogger("Nifty1HrSMA.telegram")
-STRATEGY_NAME = "NIFTY 1-Hour SMA PUT Strategy"
+_log = logging.getLogger("Nifty1HrSMA_v2.telegram")
+STRATEGY_NAME = "NIFTY 1-Hour SMA PUT Strategy v2"
 
 
 class TelegramAlerter:

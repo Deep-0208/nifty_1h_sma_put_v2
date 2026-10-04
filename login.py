@@ -13,7 +13,7 @@ from urllib.parse import urlparse, parse_qs
 from dotenv import load_dotenv, set_key
 from kiteconnect import KiteConnect
 
-from config import DOTENV_PATH, PROJECT_ROOT, log
+from config import CONFIG, DOTENV_PATH, PROJECT_ROOT, log
 
 # -- Constants --
 MAX_LOGIN_RETRIES = 3
@@ -208,7 +208,7 @@ def create_kite_session(on_token_refreshed=None) -> KiteConnect:
     if not api_key:
         raise LoginError("API_KEY not found in .env. Cannot proceed.")
 
-    kite = KiteConnect(api_key=api_key, timeout=10)
+    kite = KiteConnect(api_key=api_key, timeout=CONFIG.get("api_timeout_s", 2.5))
 
     def on_session_expiry():
         log.warning("⚠️ Kite session expired mid-day! Attempting auto-re-login...")

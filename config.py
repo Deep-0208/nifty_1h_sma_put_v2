@@ -1,5 +1,5 @@
 """
-config.py - NIFTY 1-Hour SMA PUT Strategy
+config.py - NIFTY 1-Hour SMA PUT Strategy v2
 All strategy parameters and multi-channel logging setup.
 No strategy logic lives here.
 """
@@ -81,6 +81,11 @@ CONFIG = {
     # Trading mode
     "trading_mode": "PAPER",
 
+    # Market-Order Price Protection (SEBI / Kite Connect v3)
+    # -1 = automatic protection applied by the exchange/system.
+    # >0 and up to 100 = custom protection %.
+    "market_protection": -1,
+
     # Virtual starting capital
     "starting_capital": 100000.0,
 
@@ -96,6 +101,14 @@ CONFIG = {
     "log_level": "INFO",
     "log_max_bytes": 10 * 1024 * 1024,
     "log_backup_count": 10,
+
+    # ── API Network Timeout & Boundary Polling ───
+    "api_timeout_s": 2.5,                  # Fast timeout in seconds for KiteConnect REST calls
+    "boundary_initial_wait_s": 3.5,        # Initial wait in seconds after candle boundary before first fetch
+    "retry_jitter_min_s": 1.0,             # Min jitter between retries
+    "retry_jitter_max_s": 3.0,             # Max jitter between retries
+    "api_max_retries": 10,                 # Max retries on boundary fetch before fallback
+    "strategy_jitter_offset_s": 0.0,       # Jitter offset for polling intervals
 }
 
 
@@ -107,14 +120,13 @@ CONFIG = {
 #   strategy.log  — Main strategy flow (INFO+)
 #   debug.log     — Full debug trace (DEBUG+)
 #   trades.log    — Entries, exits, P&L only
-#   candles.csv   — Closed 1H bars with SMA20/50 & pattern flags
 #   network.log   — Network, HTTP & WebSocket logs
 #
 # Persistent cross-day ledger:
 #   logs/journal.csv
 # ═══════════════════════════════════════════════
 
-LOGGER_NAME = "Nifty1HrSMA"
+LOGGER_NAME = "Nifty1HrSMA_v2"
 
 
 def _make_formatter(include_module: bool = False) -> logging.Formatter:
@@ -184,25 +196,6 @@ def setup_logging() -> logging.Logger:
     trades_fh.addFilter(TradeFilter())
     trades_logger.addHandler(trades_fh)
 
-    # 5. Dedicated Candle CSV log
-    candles_logger = logging.getLogger(f"{LOGGER_NAME}.candles")
-    candles_fh = logging.FileHandler(
-        daily_log_dir / "candles.csv",
-        mode="a",
-        encoding="utf-8",
-    )
-    candles_fh.setLevel(logging.INFO)
-    candles_fh.setFormatter(logging.Formatter("%(message)s"))
-    candles_logger.addHandler(candles_fh)
-    candles_logger.propagate = False
-
-    # Write CSV header if file is new/empty
-    candles_csv = daily_log_dir / "candles.csv"
-    if not candles_csv.exists() or candles_csv.stat().st_size == 0:
-        candles_logger.info(
-            "timestamp,type,symbol,open,high,low,close,sma_20,sma_50,is_red,below_sma20,below_sma50"
-        )
-
     # 6. Network log (isolate 3rd-party HTTP/WS noise)
     network_logger = logging.getLogger(f"{LOGGER_NAME}.network")
     _add_file_handler(network_logger, "network.log", daily_log_dir, level=logging.DEBUG, include_module=True)
@@ -257,28 +250,6 @@ def rotate_daily_logs(target_date: date = None) -> None:
     trades_fh.setFormatter(_make_formatter(include_module=True))
     trades_fh.addFilter(TradeFilter())
     trades_logger.addHandler(trades_fh)
-
-    # Candles logger
-    candles_logger = logging.getLogger(f"{LOGGER_NAME}.candles")
-    for h in list(candles_logger.handlers):
-        if isinstance(h, logging.FileHandler):
-            h.close()
-            candles_logger.removeHandler(h)
-
-    candles_fh = logging.FileHandler(
-        daily_log_dir / "candles.csv",
-        mode="a",
-        encoding="utf-8",
-    )
-    candles_fh.setLevel(logging.INFO)
-    candles_fh.setFormatter(logging.Formatter("%(message)s"))
-    candles_logger.addHandler(candles_fh)
-
-    candles_csv = daily_log_dir / "candles.csv"
-    if not candles_csv.exists() or candles_csv.stat().st_size == 0:
-        candles_logger.info(
-            "timestamp,type,symbol,open,high,low,close,sma_20,sma_50,is_red,below_sma20,below_sma50"
-        )
 
     # Network logger
     network_logger = logging.getLogger(f"{LOGGER_NAME}.network")

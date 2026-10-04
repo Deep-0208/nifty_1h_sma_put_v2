@@ -44,22 +44,22 @@ class DataManager:
                 else:
                     last_start = last_start.astimezone(IST)
 
+                initial_wait_s = CONFIG.get("boundary_initial_wait_s", 3.5)
                 # If all cached candles are from previous days, today's first 1H candle
-                # (09:15 - 10:15) closes at 10:15:03 IST.
+                # (09:15 - 10:15) closes at 10:15 IST + boundary_initial_wait_s.
                 if last_start.date() < today:
                     next_close = datetime.combine(
-                        today, dtime(10, 15, 3), tzinfo=IST
-                    )
+                        today, dtime(10, 15), tzinfo=IST
+                    ) + timedelta(seconds=initial_wait_s)
                 else:
                     # Next candle starts at last_start + 1H, and closes at last_start + 2H
-                    # Exception: 14:15 candle starts at 14:15 and closes at 15:15 (next close is 15:15:03)
-                    # The 15:15 candle closes at 15:30:03.
+                    # Exception: 14:15 candle starts at 14:15 and closes at 15:15
                     if last_start.time() == dtime(14, 15):
-                        next_close = last_start + timedelta(minutes=60, seconds=3)
+                        next_close = last_start + timedelta(minutes=60, seconds=initial_wait_s)
                     else:
                         next_close = last_start + timedelta(
                             minutes=CONFIG["candle_tf_minutes"] * 2,
-                            seconds=3,
+                            seconds=initial_wait_s,
                         )
 
                 if now < next_close:
@@ -85,10 +85,25 @@ class DataManager:
             CONFIG["nifty_instrument_token"], from_date, to_date,
         )
 
-        max_retries = 3
+        max_retries = CONFIG.get("api_max_retries", 10)
+        timeout_s = CONFIG.get("api_timeout_s", 2.5)
+        jitter_min = CONFIG.get("retry_jitter_min_s", 1.0)
+        jitter_max = CONFIG.get("retry_jitter_max_s", 3.0)
+
         for attempt in range(1, max_retries + 1):
+            old_timeout = getattr(self.kite, "timeout", None)
             try:
-                time.sleep(random.uniform(0.1, 0.4))
+                if attempt > 1:
+                    retry_delay = random.uniform(jitter_min, jitter_max)
+                    log_data.debug(
+                        "FETCH RETRY WAIT | label=spot_1h | attempt=%d/%d | delay=%.2fs",
+                        attempt, max_retries, retry_delay
+                    )
+                    time.sleep(retry_delay)
+                elif CONFIG.get("strategy_jitter_offset_s", 0.0) > 0:
+                    time.sleep(CONFIG["strategy_jitter_offset_s"])
+
+                self.kite.timeout = timeout_s
                 candles = self.kite.historical_data(
                     instrument_token=CONFIG["nifty_instrument_token"],
                     from_date=from_date,
@@ -99,8 +114,8 @@ class DataManager:
                 self._last_boundary_logged = None
 
                 log_data.info(
-                    "Fetched %d Spot 1H candles (total API calls: %d)",
-                    len(candles), self._fetch_count,
+                    "Fetched %d Spot 1H candles (attempt %d/%d, total API calls: %d)",
+                    len(candles), attempt, max_retries, self._fetch_count,
                 )
 
                 if candles:
@@ -117,14 +132,15 @@ class DataManager:
                     "Failed to fetch Spot candles (attempt %d/%d): %s",
                     attempt, max_retries, e,
                 )
-                if attempt < max_retries:
-                    time.sleep(0.5 * (2 ** (attempt - 1)))
-                else:
+                if attempt >= max_retries:
                     log_data.error(
                         "All %d attempts failed to fetch Spot candles: %s. Returning %d cached.",
                         max_retries, e, len(self._spot_candles),
                     )
                     return self._spot_candles
+            finally:
+                if old_timeout is not None:
+                    self.kite.timeout = old_timeout
 
     def _drop_incomplete_candle(self, candles: List[Dict]) -> List[Dict]:
         """

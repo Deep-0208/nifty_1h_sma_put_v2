@@ -25,10 +25,6 @@ from orders import OrderManager
 import telegram_alerts as tg
 
 # ── Validation Analytics Engine ──
-try:
-    from validation import AnalyticsEngine
-except ImportError:
-    AnalyticsEngine = None
 
 # ── Thread lock for WebSocket exit safety ──
 trade_lock = threading.Lock()
@@ -39,7 +35,7 @@ def _banner():
     mode = CONFIG["trading_mode"]
     mode_str = "📝 PAPER TRADING" if mode == "PAPER" else "🔴 LIVE TRADING"
     log.info("=" * 65)
-    log.info("  NIFTY 1-HOUR SMA PUT STRATEGY")
+    log.info("  NIFTY 1-HOUR SMA PUT STRATEGY v2")
     log.info("  MODE: %s", mode_str)
     log.info("  TF: %s | Lots: %d | Lot Size: %d", CONFIG["candle_tf"], CONFIG["num_lots"], CONFIG["lot_size_default"])
     log.info("  SMA Short: %d | SMA Long: %d", CONFIG["sma_short"], CONFIG["sma_long"])
@@ -192,7 +188,7 @@ def _crash_recovery(
 def _execute_entry(
     signal, kite, data_mgr: DataManager,
     instrument_mgr: InstrumentManager, order_mgr: OrderManager,
-    state: dict, analytics=None,
+    state: dict,
 ) -> bool:
     """
     Execute the entry sequence after a signal is confirmed.
@@ -208,12 +204,6 @@ def _execute_entry(
         reason = "SPOT_LTP_UNAVAILABLE"
         log.warning("Entry skipped: %s", reason)
         tg.setup_skipped(reason, mode)
-        if analytics:
-            analytics.record_setup(
-                direction="BEARISH_PUT", spot_price=None, atm_strike=None,
-                candle=signal.signal_candle, spot_sl=signal.spot_sl, spot_target=None,
-                spot_risk_pts=None, pattern_valid=True, trade_taken=False, skip_reason=reason,
-            )
         return False
 
     entry_spot = spot_ltp
@@ -232,12 +222,6 @@ def _execute_entry(
         )
         log.warning("Entry skipped: %s", reason)
         tg.setup_skipped(reason, mode)
-        if analytics:
-            analytics.record_setup(
-                direction="BEARISH_PUT", spot_price=entry_spot, atm_strike=atm_strike,
-                candle=signal.signal_candle, spot_sl=signal.spot_sl, spot_target=None,
-                spot_risk_pts=None, pattern_valid=True, trade_taken=False, skip_reason=reason,
-            )
         return False
 
     # 4. Verify contract not expired
@@ -246,12 +230,6 @@ def _execute_entry(
         reason = f"CONTRACT_EXPIRED: {option_info['tradingsymbol']} expiry={expiry}"
         log.warning("Entry skipped: %s", reason)
         tg.setup_skipped(reason, mode)
-        if analytics:
-            analytics.record_setup(
-                direction="BEARISH_PUT", spot_price=entry_spot, atm_strike=atm_strike,
-                candle=signal.signal_candle, spot_sl=signal.spot_sl, spot_target=None,
-                spot_risk_pts=None, pattern_valid=True, trade_taken=False, skip_reason=reason,
-            )
         return False
 
     # 5. Calculate Spot risk
@@ -260,12 +238,6 @@ def _execute_entry(
         reason = risk_params.skip_reason
         log.warning("Entry skipped: %s", reason)
         tg.setup_skipped(reason, mode)
-        if analytics:
-            analytics.record_setup(
-                direction="BEARISH_PUT", spot_price=entry_spot, atm_strike=atm_strike,
-                candle=signal.signal_candle, spot_sl=signal.spot_sl, spot_target=None,
-                spot_risk_pts=None, pattern_valid=False, trade_taken=False, skip_reason=reason,
-            )
         return False
 
     # 6. Fetch option premium for entry (with multi-attempt verification)
@@ -284,24 +256,9 @@ def _execute_entry(
         reason = f"OPTION_LTP_UNAVAILABLE: {option_info['tradingsymbol']}"
         log.warning("Entry skipped: %s", reason)
         tg.setup_skipped(reason, mode)
-        if analytics:
-            analytics.record_setup(
-                direction="BEARISH_PUT", spot_price=entry_spot, atm_strike=atm_strike,
-                candle=signal.signal_candle, spot_sl=risk_params.spot_sl, spot_target=risk_params.spot_target,
-                spot_risk_pts=risk_params.spot_risk, pattern_valid=True, trade_taken=False, skip_reason=reason,
-            )
         return False
 
-    # 7. Record setup in validation analytics
-    setup_num = 0
-    if analytics:
-        setup_num = analytics.record_setup(
-            direction="BEARISH_PUT", spot_price=entry_spot, atm_strike=atm_strike,
-            candle=signal.signal_candle, spot_sl=risk_params.spot_sl, spot_target=risk_params.spot_target,
-            spot_risk_pts=risk_params.spot_risk, pattern_valid=True, trade_taken=True,
-        )
-
-    # 8. Enter the trade
+    # 7. Enter the trade
     log.info(
         "Entering trade: %s | spot=%.2f | atm=%d | premium=%.2f | "
         "SL=%.2f | target=%.2f",
@@ -310,7 +267,7 @@ def _execute_entry(
     )
 
     success = order_mgr.enter_trade(
-        option_info, risk_params, entry_spot, entry_premium, setup_num=setup_num,
+        option_info, risk_params, entry_spot, entry_premium,
     )
     return success
 
@@ -383,16 +340,8 @@ def main():
     )
 
     # 5. Initialize Validation Analytics Engine
-    analytics = None
-    if AnalyticsEngine is not None:
-        try:
-            analytics = AnalyticsEngine(today_ist(), cash)
-            log.info("✅ Validation engine initialized.")
-        except Exception as e:
-            log.warning("⚠️ Validation engine failed to init: %s", e)
-
     # 6. Initialize order manager
-    order_mgr = OrderManager(kite, state, data_mgr, analytics=analytics)
+    order_mgr = OrderManager(kite, state, data_mgr)
 
     # 7. Run startup pre-flight checks
     log.info("🔍 Running startup checks...")
@@ -520,17 +469,6 @@ def main():
                     "Date rollover: %s -> %s. Resetting daily counters. Preserving open position.",
                     last_rollover_date, current_date,
                 )
-                if analytics:
-                    try:
-                        analytics.generate_daily_summary(state.get("cash", CONFIG["starting_capital"]))
-                    except Exception:
-                        pass
-                    try:
-                        analytics = AnalyticsEngine(current_date, state.get("cash", CONFIG["starting_capital"]))
-                        order_mgr.analytics = analytics
-                    except Exception:
-                        pass
-
                 state["trades_today"] = 0
                 state["realized_pnl_today"] = 0.0
                 state["date"] = current_date.isoformat()
@@ -663,20 +601,6 @@ def main():
                 f"{latest_candle.get('sma_50', 'N/A'):.2f}"
                 if latest_candle.get("sma_50") is not None else "N/A",
             )
-
-            # Record raw candle to candles.csv
-            is_red = latest_candle["close"] < latest_candle["open"]
-            s20 = latest_candle.get("sma_20")
-            s50 = latest_candle.get("sma_50")
-            below_s20 = s20 is not None and latest_candle["close"] < s20
-            below_s50 = s50 is not None and latest_candle["close"] < s50
-            log_candles.info(
-                f"{candle_time},1H,NIFTY,{latest_candle['open']:.2f},{latest_candle['high']:.2f},"
-                f"{latest_candle['low']:.2f},{latest_candle['close']:.2f},"
-                f"{round(s20, 2) if s20 is not None else ''},{round(s50, 2) if s50 is not None else ''},"
-                f"{is_red},{below_s20},{below_s50}"
-            )
-
             data_mgr.mark_candle_processed(candle_time)
 
             # No-trade checks
@@ -733,7 +657,7 @@ def main():
             # Execute entry
             with trade_lock:
                 _execute_entry(
-                    signal, kite, data_mgr, instrument_mgr, order_mgr, state, analytics=analytics,
+                    signal, kite, data_mgr, instrument_mgr, order_mgr, state,
                 )
 
             state["last_signal_candle_time"] = candle_time_str
@@ -775,12 +699,6 @@ def main():
                 kws_ref[0].close()
         except Exception:
             pass
-
-        if analytics:
-            try:
-                analytics.generate_daily_summary(state.get("cash", CONFIG["starting_capital"]))
-            except Exception:
-                pass
 
         tg.day_summary(
             state.get("trades_today", 0),

@@ -126,10 +126,10 @@ def _make_candle(o, h, l, c, sma_20=None, sma_50=None, dt=None):
 
 
 def test_signal_valid():
-    """T4: Valid bearish signal - red candle below both SMAs."""
+    """T4: Valid bearish signal - red candle opening between 20 & 50 SMA and closing below both."""
     _section("Signal Tests")
     from pattern import detect_signal
-    candle = _make_candle(o=24600, h=24620, l=24480, c=24500,
+    candle = _make_candle(o=24565, h=24575, l=24480, c=24500,
                           sma_20=24550, sma_50=24580)
     result = detect_signal([candle])
     _test("Valid signal returns SetupSignal",
@@ -138,15 +138,15 @@ def test_signal_valid():
     if result:
         _test("Signal type is BEARISH_SMA_BREAKDOWN",
               result.signal_type == "BEARISH_SMA_BREAKDOWN")
-        _test("Spot SL = candle high (24620)",
-              result.spot_sl == 24620,
+        _test("Spot SL = candle high (24575)",
+              result.spot_sl == 24575,
               f"got {result.spot_sl}")
 
 
 def test_signal_green_candle():
     """T5: Green candle (close > open) - NO signal."""
     from pattern import detect_signal
-    candle = _make_candle(o=24400, h=24620, l=24380, c=24500,
+    candle = _make_candle(o=24565, h=24620, l=24480, c=24570,
                           sma_20=24550, sma_50=24580)
     result = detect_signal([candle])
     _test("Green candle -> None", result is None, f"got {result}")
@@ -155,7 +155,7 @@ def test_signal_green_candle():
 def test_signal_above_sma20():
     """T6: Red candle but close ABOVE SMA20 - NO signal."""
     from pattern import detect_signal
-    candle = _make_candle(o=24600, h=24620, l=24480, c=24560,
+    candle = _make_candle(o=24565, h=24620, l=24480, c=24560,
                           sma_20=24550, sma_50=24580)
     result = detect_signal([candle])
     _test("Above SMA20 -> None", result is None, f"got {result}")
@@ -164,10 +164,29 @@ def test_signal_above_sma20():
 def test_signal_above_sma50():
     """T7: Red candle below SMA20 but ABOVE SMA50 - NO signal."""
     from pattern import detect_signal
-    candle = _make_candle(o=24600, h=24620, l=24480, c=24540,
+    candle = _make_candle(o=24565, h=24620, l=24480, c=24540,
                           sma_20=24550, sma_50=24530)
     result = detect_signal([candle])
     _test("Above SMA50 -> None", result is None, f"got {result}")
+
+
+def test_signal_open_outside_smas():
+    """T7b: v2 rule - Open above SMA50 or below SMA20 or inverted SMAs - NO signal."""
+    from pattern import detect_signal
+    # Open above SMA50 (o=24600 > sma_50=24580)
+    c_above = _make_candle(o=24600, h=24620, l=24480, c=24500,
+                           sma_20=24550, sma_50=24580)
+    _test("Open above SMA50 -> None", detect_signal([c_above]) is None)
+
+    # Open below SMA20 (o=24540 < sma_20=24550)
+    c_below = _make_candle(o=24540, h=24545, l=24480, c=24500,
+                           sma_20=24550, sma_50=24580)
+    _test("Open below SMA20 -> None", detect_signal([c_below]) is None)
+
+    # Inverted SMAs: sma_20 > sma_50 (golden cross condition)
+    c_inverted = _make_candle(o=24565, h=24620, l=24480, c=24500,
+                              sma_20=24580, sma_50=24550)
+    _test("Inverted SMAs (sma_20 > sma_50) -> None", detect_signal([c_inverted]) is None)
 
 
 def test_signal_missing_sma():
@@ -1224,12 +1243,18 @@ def test_order_manager_product_type_parity():
         _test("LIVE BUY placed with PRODUCT_NRML",
               len(mock_kite.orders) == 1 and mock_kite.orders[0]["product"] == "NRML",
               f"got {mock_kite.orders[0]['product'] if mock_kite.orders else 'no order'}")
+        _test("LIVE BUY carries market_protection=-1",
+              len(mock_kite.orders) == 1 and mock_kite.orders[0].get("market_protection") == -1,
+              f"got {mock_kite.orders[0].get('market_protection') if mock_kite.orders else 'no order'}")
 
         # SELL Exit
         exited = om.exit_trade("STOP_LOSS", 80.0)
         _test("LIVE SELL exit placed with PRODUCT_NRML (matches entry)",
               len(mock_kite.orders) == 2 and mock_kite.orders[1]["product"] == "NRML",
               f"got {mock_kite.orders[1]['product'] if len(mock_kite.orders) > 1 else 'no order'}")
+        _test("LIVE SELL carries market_protection=-1",
+              len(mock_kite.orders) == 2 and mock_kite.orders[1].get("market_protection") == -1,
+              f"got {mock_kite.orders[1].get('market_protection') if len(mock_kite.orders) > 1 else 'no order'}")
 
     finally:
         CONFIG["trading_mode"] = orig_mode
@@ -1279,11 +1304,12 @@ if __name__ == "__main__":
     test_sma_50()
     test_sma_warmup()
 
-    # 2. Signal Tests (11 assertions across 8 functions)
+    # 2. Signal Tests (14 assertions across 9 functions)
     test_signal_valid()
     test_signal_green_candle()
     test_signal_above_sma20()
     test_signal_above_sma50()
+    test_signal_open_outside_smas()
     test_signal_missing_sma()
     test_signal_nan_sma()
     test_signal_empty_candles()
