@@ -5,7 +5,7 @@ No option-premium SL/TP is computed here.
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Any
 
 from config import CONFIG, log_risk
 
@@ -22,21 +22,40 @@ class SpotRiskParams:
     skip_reason: str
 
 
-def get_atm_strike(spot_price: float, step: int = None) -> int:
+def get_atm_strike(
+    spot_price: float,
+    option_type: Optional[Any] = "PE",
+    step: Optional[int] = None,
+) -> int:
     """
-    Deterministic nearest-strike rounding.
-    Uses floor((spot + half_step) / step) * step to avoid
-    Python's bankers rounding behavior.
-    """
-    if step is None:
-        step = CONFIG["strike_step"]
+    Determine the target strike for an option based on spot price and option type.
 
-    half_step = step // 2  # 25 for step=50
-    atm = int((spot_price + half_step) // step) * step
+    Rules for Directional Option Buying (In-The-Money / Slight ITM Anchor):
+        - CE (Call): Always floor to the lower strike boundary (e.g. 22401-22499 -> 22400 CE).
+        - PE (Put):  Always ceiling to the upper strike boundary (e.g. 22401-22499 -> 22500 PE).
+        - Exact boundary (spot % step == 0): Stays at spot (e.g. 22400 CE -> 22400, 22400 PE -> 22400).
+        - None: Fallback to nearest step (midpoint -> UP).
+    """
+    if isinstance(option_type, (int, float)):
+        step = int(option_type)
+        option_type = "PE"
+
+    if step is None:
+        step = CONFIG.get("strike_step", 100)
+
+    base = int(spot_price // step) * step
+
+    if option_type == "CE":
+        atm = base
+    elif option_type == "PE":
+        atm = base if spot_price % step == 0 else base + step
+    else:
+        remainder = spot_price - base
+        atm = base if remainder < (step / 2) else base + step
 
     log_risk.debug(
-        "🎯 ATM strike math: spot=%.2f, step=%d, half=%d -> ATM=%d",
-        spot_price, step, half_step, atm,
+        "🎯 ATM strike math: spot=%.2f, option_type=%s, step=%d -> ATM=%d",
+        spot_price, option_type, step, atm,
     )
     return atm
 

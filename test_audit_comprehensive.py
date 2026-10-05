@@ -232,27 +232,45 @@ def test_signal_duplicate():
 # ═══════════════════════════════════════════════
 
 def test_atm_strike():
-    """T12-T21: Deterministic nearest-50 rounding."""
+    """T12-T21: Directional ITM Strike Resolution (CE Floor, PE Ceiling)."""
     _section("ATM Strike Tests")
     from risk import get_atm_strike
 
-    cases = [
-        (24974, 24950),
-        (24975, 25000),
-        (25024, 25000),
-        (25025, 25050),
-        (25026, 25050),
-        (25050, 25050),
-        (25000, 25000),
-        (24999, 25000),
-        (24950, 24950),
-        (24951, 24950),
+    # 1. PE directional ceiling (100-pt step): 22401-22499 -> 22500 PE
+    pe_cases_100 = [
+        (22401, 22500),
+        (22415, 22500),
+        (22449, 22500),
+        (22450, 22500),
+        (22475, 22500),
+        (22499, 22500),
+        (22400, 22400),  # exact boundary
+        (22500, 22500),  # exact boundary
     ]
-    for spot, expected in cases:
-        result = get_atm_strike(spot, step=50)
-        _test(f"ATM({spot}) = {expected}",
+    for spot, expected in pe_cases_100:
+        result = get_atm_strike(spot, option_type="PE", step=100)
+        _test(f"ATM_PE({spot}, step=100) = {expected}",
               result == expected,
               f"got {result}")
+
+    # 2. CE directional floor (100-pt step): 22401-22499 -> 22400 CE
+    ce_cases_100 = [
+        (22401, 22400),
+        (22450, 22400),
+        (22499, 22400),
+        (22400, 22400),  # exact boundary
+    ]
+    for spot, expected in ce_cases_100:
+        result = get_atm_strike(spot, option_type="CE", step=100)
+        _test(f"ATM_CE({spot}, step=100) = {expected}",
+              result == expected,
+              f"got {result}")
+
+    # 3. Default option_type="PE" and default CONFIG step
+    result_default = get_atm_strike(22450)
+    _test("Default ATM for 22450 -> 22500 PE",
+          result_default == 22500,
+          f"got {result_default}")
 
 
 # ═══════════════════════════════════════════════

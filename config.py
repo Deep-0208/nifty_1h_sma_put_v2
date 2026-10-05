@@ -44,7 +44,7 @@ CONFIG = {
     "num_lots": 1,
 
     # ATM strike resolution
-    "strike_step": 50,
+    "strike_step": 100,
 
     # Expiry
     "expiry_preference": "monthly",
