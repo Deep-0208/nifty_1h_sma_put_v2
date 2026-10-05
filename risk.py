@@ -11,6 +11,72 @@ from config import CONFIG, log_risk
 
 
 @dataclass
+class TradeCharges:
+    """Round-trip transaction costs for one NFO option trade."""
+    brokerage: float
+    stt: float
+    exchange: float
+    sebi: float
+    stamp_duty: float
+    gst: float
+    total: float
+
+    def breakdown(self) -> str:
+        """One-line summary for logs and the journal."""
+        return (
+            f"brokerage={self.brokerage:.2f} stt={self.stt:.2f} "
+            f"exch={self.exchange:.2f} sebi={self.sebi:.2f} "
+            f"stamp={self.stamp_duty:.2f} gst={self.gst:.2f} "
+            f"total={self.total:.2f}"
+        )
+
+
+def calculate_transaction_costs(
+    entry_price: float,
+    exit_price: float,
+    qty: int,
+) -> TradeCharges:
+    """
+    Model the real round-trip cost of a bought NFO option (NSE / Zerodha).
+
+    Args:
+        entry_price: BUY premium per unit
+        exit_price:  SELL premium per unit
+        qty:         contracts (lot_size x num_lots)
+
+    Returns:
+        TradeCharges (all values in ₹, rounded to paise). Never raises.
+    """
+    c = CONFIG.get("charges", {})
+    try:
+        buy_turnover = max(0.0, float(entry_price)) * int(qty)
+        sell_turnover = max(0.0, float(exit_price)) * int(qty)
+    except (TypeError, ValueError):
+        return TradeCharges(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    turnover = buy_turnover + sell_turnover
+
+    # Two executed orders per round trip (entry + exit)
+    brokerage = round(2 * float(c.get("brokerage_per_order", 20.0)), 2)
+    stt = round(sell_turnover * float(c.get("stt_sell_pct", 0.001)), 2)
+    exchange = round(turnover * float(c.get("exchange_txn_pct", 0.0003503)), 2)
+    sebi = round(turnover * float(c.get("sebi_pct", 0.000001)), 2)
+    stamp_duty = round(buy_turnover * float(c.get("stamp_duty_buy_pct", 0.00003)), 2)
+    gst = round(float(c.get("gst_pct", 0.18)) * (brokerage + exchange + sebi), 2)
+
+    total = round(brokerage + stt + exchange + sebi + stamp_duty + gst, 2)
+    return TradeCharges(
+        brokerage=brokerage,
+        stt=stt,
+        exchange=exchange,
+        sebi=sebi,
+        stamp_duty=stamp_duty,
+        gst=gst,
+        total=total,
+    )
+
+
+@dataclass
 class SpotRiskParams:
     """Spot-level risk parameters for a PUT trade."""
     entry_spot: float

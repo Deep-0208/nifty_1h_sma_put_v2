@@ -89,6 +89,22 @@ CONFIG = {
     # Virtual starting capital
     "starting_capital": 100000.0,
 
+    # ── Slippage & Margin Guards (Live Execution) ──
+    "max_spread_pct": 0.04,          # Max allowed bid-ask spread % (4%)
+    "max_spread_pts": 4.0,           # Max allowed bid-ask spread in points (4 pts)
+    "min_depth_qty": 65,             # Minimum top-of-book depth quantity
+    "margin_buffer_pct": 0.05,       # Required cash buffer above premium (5%)
+
+    # ── Transaction Costs Breakdown (H9 Institutional Model) ──
+    "charges": {
+        "brokerage_per_order": 20.0,
+        "stt_sell_pct": 0.001,          # 0.1% on sell side (options)
+        "exchange_txn_pct": 0.0003503,  # NSE options turnover charge
+        "sebi_pct": 0.000001,           # ₹10 per crore
+        "stamp_duty_buy_pct": 0.00003,  # 0.003% on buy turnover
+        "gst_pct": 0.18,                # 18% on (brokerage + exchange + sebi)
+    },
+
     # Monitoring intervals
     "candle_poll_interval_s": 30,
     "position_monitor_interval_s": 5,

@@ -286,10 +286,13 @@ def main():
         print("Product: NRML (Positional Carryforward)")
         print(f"Max Trades/Day: {CONFIG.get('max_trades_per_day', 5)}")
         print("=" * 60)
-        confirm = input("Proceed? (y/n): ").strip().lower()
-        if confirm != "y":
-            print("Aborted.")
-            sys.exit(0)
+        if sys.stdin.isatty():
+            confirm = input("Proceed? (y/n): ").strip().lower()
+            if confirm != "y":
+                print("Aborted.")
+                sys.exit(0)
+        else:
+            log.info("Non-interactive / systemd daemon mode detected: bypassing LIVE prompt.")
 
     # 1. Authenticate
     try:
