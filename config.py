@@ -5,6 +5,7 @@ No strategy logic lives here.
 """
 
 import os
+import re
 import logging
 from datetime import datetime, date, time as dtime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
@@ -153,6 +154,29 @@ def _make_formatter(include_module: bool = False) -> logging.Formatter:
     return logging.Formatter(fmt, datefmt="%Y-%m-%d %H:%M:%S")
 
 
+# urllib3 logs request lines ("POST /bot<TOKEN>/sendMessage") at DEBUG — mask the Telegram bot token.
+_TG_TOKEN_RE = re.compile(r"/bot[0-9]+:[A-Za-z0-9_\-]+")
+
+
+class _TelegramTokenFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+        clean = _TG_TOKEN_RE.sub("/bot<redacted>", message)
+        if clean != message:
+            record.msg, record.args = clean, None
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if record.exc_text:
+            record.exc_text = _TG_TOKEN_RE.sub("/bot<redacted>", record.exc_text)
+        return True
+
+
+_TG_TOKEN_FILTER = _TelegramTokenFilter()
+
+
 def _add_file_handler(
     logger: logging.Logger,
     filename: str,
@@ -168,6 +192,7 @@ def _add_file_handler(
     )
     fh.setLevel(level)
     fh.setFormatter(_make_formatter(include_module))
+    fh.addFilter(_TG_TOKEN_FILTER)
     logger.addHandler(fh)
 
 

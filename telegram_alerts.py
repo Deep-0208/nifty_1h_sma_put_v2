@@ -89,7 +89,9 @@ class TelegramAlerter:
                     timeout=10,
                 )
         except Exception as exc:
-            _log.warning("Telegram send failed (non-critical): %s", exc)
+            # requests puts the full URL (bot token included) in its error text — never log it.
+            _log.warning("Telegram send failed (non-critical): %s",
+                         str(exc).replace(str(self._token), "<redacted>"))
 
 
     def _send_async(self, text: str) -> None:
