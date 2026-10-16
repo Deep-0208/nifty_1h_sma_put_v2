@@ -185,17 +185,33 @@ class TelegramAlerter:
         pnl: float,
         mode: str = "PAPER",
     ) -> None:
-        """Spot Stop Loss Hit Alert"""
+        """Spot Stop Loss Hit Alert / Take Profit"""
         mode_label = "📝 PAPER" if mode == "PAPER" else "🚀 LIVE"
+        if pnl > 0:
+            header_prefix = "🎯"
+            sl_type = "Take Profit (SL)"
+            exit_dot = "🟢"
+            chart_emoji = "📈"
+        elif pnl == 0:
+            header_prefix = "⚖️"
+            sl_type = "Breakeven Exit (SL)"
+            exit_dot = "⚪"
+            chart_emoji = "📊"
+        else:
+            header_prefix = "🛑"
+            sl_type = "Spot Stop Loss Hit"
+            exit_dot = "🔴"
+            chart_emoji = "📉"
+
         pnl_sign = "+" if pnl >= 0 else "-"
         pnl_str = f"{pnl_sign}₹{abs(pnl):,.2f}"
         msg = (
-            f"🛑 *Spot Stop Loss Hit* \\| {mode_label}\n"
+            f"{header_prefix} *{self._escape(sl_type)}* \\| {mode_label}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📌 Symbol:    `{self._escape(symbol)}`\n"
             f"💰 Entry:     `₹{entry_premium:.2f}`\n"
-            f"🔴 Exit:      `₹{exit_premium:.2f}`\n"
-            f"📉 P&L:       `{pnl_str}`\n"
+            f"{exit_dot} Exit:      `₹{exit_premium:.2f}`\n"
+            f"{chart_emoji} P&L:       `{pnl_str}`\n"
             f"🕐 Time:      `{_now_ist_str()}`"
         )
         self._send_async(msg)
