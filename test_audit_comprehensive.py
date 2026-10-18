@@ -171,21 +171,22 @@ def test_signal_above_sma50():
 
 
 def test_signal_open_outside_smas():
-    """T7b: v2 rule - Open above SMA50 or below SMA20 or inverted SMAs - NO signal."""
+    """T7b: v2 rule - Open above both SMAs is VALID (bearish aligned); open at/below
+    SMA20 or inverted SMAs (sma_20 >= sma_50) are rejected."""
     from pattern import detect_signal
-    # Open above SMA50 (o=24600 > sma_50=24580)
+    # Open above both SMAs (o=24600 > sma_50=24580 > sma_20=24550), closes below both -> VALID
     c_above = _make_candle(o=24600, h=24620, l=24480, c=24500,
                            sma_20=24550, sma_50=24580)
-    _test("Open above SMA50 -> None", detect_signal([c_above]) is None)
+    _test("Open above both SMAs (bearish aligned) -> SIGNAL", detect_signal([c_above]) is not None)
 
-    # Open below SMA20 (o=24540 < sma_20=24550)
+    # Open below SMA20 (o=24540 < sma_20=24550) -> rejected
     c_below = _make_candle(o=24540, h=24545, l=24480, c=24500,
                            sma_20=24550, sma_50=24580)
     _test("Open below SMA20 -> None", detect_signal([c_below]) is None)
 
-    # Inverted SMAs: sma_20 > sma_50 (golden cross condition)
-    c_inverted = _make_candle(o=24565, h=24620, l=24480, c=24500,
-                              sma_20=24580, sma_50=24550)
+    # Inverted SMAs: sma_20 > sma_50 (not bearish aligned), open above SMA20, closes below both
+    c_inverted = _make_candle(o=24600, h=24620, l=24480, c=24500,
+                              sma_20=24550, sma_50=24530)
     _test("Inverted SMAs (sma_20 > sma_50) -> None", detect_signal([c_inverted]) is None)
 
 
