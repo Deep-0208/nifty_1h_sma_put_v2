@@ -93,13 +93,14 @@ def load_state() -> Dict[str, Any]:
 
 
 def save_state(state: Dict[str, Any]) -> None:
-    """Atomic write: write to temp file then rename."""
-    STATE_DIR.mkdir(exist_ok=True)
+    """Atomic write: write to temp file in same directory then rename."""
+    target_dir = STATE_FILE.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w",
-            dir=str(STATE_DIR),
+            dir=str(target_dir),
             delete=False,
             encoding="utf-8",
             suffix=".tmp",
