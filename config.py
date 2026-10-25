@@ -71,7 +71,10 @@ CONFIG = {
     # Market timings (IST)
     "market_open":        dtime(9, 15),
     "first_entry":        dtime(10, 15),
-    "last_entry":         dtime(15, 15),
+    # Last decision: the 13:15 bar, evaluated just after 14:15 (TradingView-style candles: the 14:15 bar
+    # closes at 15:15, into NSE's closing session — not traded). main.py blocks when now > last_entry, so allow 14:15 + 5 min
+    # for the candle fetch and its retries.
+    "last_entry":         dtime(14, 20),
     "expiry_force_exit":  dtime(15, 15),  # Mandatory exit ONLY on contract expiry day
     "square_off_time":    dtime(15, 15),  # Backwards compatibility alias for expiry force exit
     "market_close":       dtime(15, 30),

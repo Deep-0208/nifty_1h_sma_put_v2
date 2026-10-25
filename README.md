@@ -24,7 +24,7 @@
 
 ## Strategy Overview
 
-This bot implements an institutional **1-Hour SMA Breakdown Strategy (v2)** on the **NIFTY 50 spot index**. When a completed 1-hour candle satisfies the bearish breakdown criteria (red candle opening between the 20-period SMA and 50-period SMA, and closing below both SMAs), it automatically buys the **ATM (At-The-Money) Monthly PUT option** as a **Positional (`NRML`)** trade, carrying it overnight and managing exit triggers strictly via **Spot-Level Stop Loss and Target levels**.
+This bot implements an institutional **1-Hour SMA Breakdown Strategy (v2)** on the **NIFTY 50 spot index**. When a completed 1-hour candle satisfies the bearish breakdown criteria (20-period SMA above the 50-period SMA, red candle opening above SMA 50 and closing below both SMAs), it automatically buys the **ATM (At-The-Money) Monthly PUT option** as a **Positional (`NRML`)** trade, carrying it overnight and managing exit triggers strictly via **Spot-Level Stop Loss and Target levels**.
 
 ### How It Works
 
@@ -39,7 +39,8 @@ Exit Triggers:   Live NIFTY Spot WebSocket LTP (Token 256265)        →  Spot S
 | Condition | Rule |
 |-----------|------|
 | **Candle Color** | Must be **red / bearish** (`Close < Open`) |
-| **Open Between SMAs** | Completed candle opens between the SMAs (`SMA(20) < Open < SMA(50)`) |
+| **SMA Alignment** | `SMA(20) > SMA(50)` |
+| **Open Above SMA 50** | `Open > SMA(50)` — between the SMAs or above both; open below SMA 50 = skip |
 | **SMA 20 Breakdown** | Completed candle `Close < SMA(20)` |
 | **SMA 50 Breakdown** | Completed candle `Close < SMA(50)` |
 | **Execution** | Trade entered at next bar open — Buy ATM Monthly PUT (`NRML`) |
@@ -85,7 +86,7 @@ Exit Triggers:   Live NIFTY Spot WebSocket LTP (Token 256265)        →  Spot S
 - Switch between modes with a single config change (`trading_mode: "PAPER"` / `"LIVE"`)
 
 ### ⏰ Market Timing Controls
-- **Entry window** — 10:15 to 15:15 IST
+- **Entry window** — 10:15 to 14:20 IST (last decision = 13:15 bar at 14:15; TradingView-style 1H candles, 6 per day — the 14:15 bar runs to 15:30 and is never traded)
 - **Expiry Force Exit** — Exits at 15:15 IST ONLY on the contract's expiry day
 - **Daily trade cap** — max 5 trades per day (resets daily, positional trades don't consume the new day's cap)
 
@@ -290,7 +291,7 @@ All strategy parameters are centralized in [config.py](config.py). Key settings:
 | `max_trades_per_day` | `5` | Daily trade cap |
 | `max_daily_loss` | `0` | Daily loss kill-switch (₹, 0 = disabled) |
 | `first_entry` | `10:15` | Earliest entry time (IST) |
-| `last_entry` | `15:15` | Latest entry time (IST) |
+| `last_entry` | `14:20` | Latest entry time (IST) |
 | `expiry_force_exit` | `15:15` | Unconditional square-off ONLY on contract expiry day |
 | `starting_capital` | `₹100,000` | Virtual capital for paper trading |
 

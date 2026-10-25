@@ -1,0 +1,141 @@
+//@version=6
+indicator("NIFTY 1-Hour SMA Bearish Breakdown [Indicator]", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 1. INPUT PARAMETERS
+// ══════════════════════════════════════════════════════════════════════════════
+grp_ma        = "SMA Configuration"
+sma_short_len = input.int(20, "Short SMA Period", minval=1, group=grp_ma)
+sma_long_len  = input.int(50, "Long SMA Period", minval=1, group=grp_ma)
+src_ma        = input.source(close, "SMA Source", group=grp_ma)
+
+grp_risk      = "Risk & Levels (1:1 Spot R:R)"
+show_levels   = input.bool(true, "Show SL / Target Lines on Chart", group=grp_risk)
+rr_ratio      = input.float(1.0, "Risk to Reward Ratio", minval=0.5, step=0.1, group=grp_risk)
+
+grp_ui        = "Visual & Dashboard Settings"
+show_table    = input.bool(true, "Show Live Conditions HUD Table", group=grp_ui)
+table_pos     = input.string("Top Right", "HUD Position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=grp_ui)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 2. INDICATOR CALCULATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+sma_20 = ta.sma(src_ma, sma_short_len)
+sma_50 = ta.sma(src_ma, sma_long_len)
+
+// Plot SMAs on chart
+p_sma20 = plot(sma_20, "SMA 20", color=color.new(#FF9800, 0), linewidth=2)
+p_sma50 = plot(sma_50, "SMA 50", color=color.new(#2196F3, 0), linewidth=2)
+fill_color = sma_20 < sma_50 ? color.new(color.red, 88) : color.new(color.green, 88)
+fill(p_sma20, p_sma50, color=fill_color, title="SMA Cloud Trend")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 3. SIGNAL CONDITIONS (Identical to Institutional Python Algo)
+// ══════════════════════════════════════════════════════════════════════════════
+// Rule 1: Candle is RED (close < open)
+cond_red = close < open
+
+// Rule 2: Candle OPEN is above SMA 50 (between the SMAs OR above both; below SMA 50 = skip)
+cond_open_above_sma50 = open > sma_50
+
+// Rule 3: SMA 20 is above SMA 50
+cond_sma_alignment = sma_20 > sma_50
+
+// Rule 4: Candle CLOSE is below SMA 20 (breakdown below short SMA)
+cond_close_below_sma20 = close < sma_20
+
+// Rule 5: Candle CLOSE is below SMA 50 (breakdown below long SMA)
+cond_close_below_sma50 = close < sma_50
+
+// Master Signal Trigger: Evaluated on closed candle to prevent repainting
+signal_confirmed = cond_red and cond_open_above_sma50 and cond_sma_alignment and cond_close_below_sma20 and cond_close_below_sma50 and barstate.isconfirmed
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 4. VISUAL SIGNALS & RISK PROJECTIONS
+// ══════════════════════════════════════════════════════════════════════════════
+var line sl_line = na
+var line tp_line = na
+var line entry_line = na
+
+if signal_confirmed
+    entry_price = close
+    sl_price    = high
+    risk_pts    = sl_price - entry_price
+    tp_price    = entry_price - (risk_pts * rr_ratio)
+
+    // Plot Signal Label
+    lbl_text = "🎯 BEARISH BREAKDOWN (PUT)\nEntry: " + str.tostring(entry_price, "#.##") + 
+               "\nSL: " + str.tostring(sl_price, "#.##") + " (+" + str.tostring(risk_pts, "#.#") + " pts)" +
+               "\nTP: " + str.tostring(tp_price, "#.##") + " (-" + str.tostring(risk_pts * rr_ratio, "#.#") + " pts)"
+
+    label.new(
+         bar_index, high, 
+         text=lbl_text, 
+         color=color.new(#D32F2F, 0), 
+         textcolor=color.white, 
+         style=label.style_label_down,
+         size=size.normal
+     )
+
+    // Draw SL & Target Projection Lines (forward 6 bars = 6 hours)
+    if show_levels
+        line.delete(sl_line)
+        line.delete(tp_line)
+        line.delete(entry_line)
+
+        sl_line := line.new(bar_index, sl_price, bar_index + 6, sl_price, color=color.red, width=2, style=line.style_dashed)
+        entry_line := line.new(bar_index, entry_price, bar_index + 6, entry_price, color=color.gray, width=1, style=line.style_dotted)
+        tp_line := line.new(bar_index, tp_price, bar_index + 6, tp_price, color=color.green, width=2, style=line.style_solid)
+
+    // Dynamic alert trigger (supports runtime dynamic strings in Pine Script v6)
+    alert("NIFTY 1H BEARISH BREAKDOWN! Entry: " + str.tostring(entry_price) + " | SL: " + str.tostring(sl_price) + " | TP: " + str.tostring(tp_price), alert.freq_once_per_bar_close)
+
+// Background highlight on signal bar
+bgcolor(signal_confirmed ? color.new(color.red, 80) : na, title="Signal Bar Highlight")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 5. LIVE CONDITIONS HUD (Status Checklist Table)
+// ══════════════════════════════════════════════════════════════════════════════
+var table hud = na
+if show_table and barstate.islast
+    pos = table_pos == "Top Right" ? position.top_right :
+          table_pos == "Bottom Right" ? position.bottom_right :
+          table_pos == "Top Left" ? position.top_left : position.bottom_left
+
+    hud := table.new(pos, 2, 7, bgcolor=color.new(#1E222D, 10), border_color=color.new(color.gray, 50), border_width=1)
+
+    // Header
+    table.cell(hud, 0, 0, "1H SMA PUT Conditions", bgcolor=color.new(#2962FF, 20), text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 0, "Status", bgcolor=color.new(#2962FF, 20), text_color=color.white, text_size=size.small)
+
+    // 1. Red Candle
+    table.cell(hud, 0, 1, "1. Candle Red (C < O)", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 1, cond_red ? "✔ PASS" : "✘ FAIL", bgcolor=cond_red ? color.new(color.green, 30) : color.new(color.red, 30), text_color=color.white, text_size=size.small)
+
+    // 2. Open > SMA 50
+    table.cell(hud, 0, 2, "2. Open > SMA 50", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 2, cond_open_above_sma50 ? "✔ PASS" : "✘ FAIL", bgcolor=cond_open_above_sma50 ? color.new(color.green, 30) : color.new(color.red, 30), text_color=color.white, text_size=size.small)
+
+    // 3. SMA 20 > SMA 50
+    table.cell(hud, 0, 3, "3. Trend (SMA20 > SMA50)", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 3, cond_sma_alignment ? "✔ PASS" : "✘ FAIL", bgcolor=cond_sma_alignment ? color.new(color.green, 30) : color.new(color.red, 30), text_color=color.white, text_size=size.small)
+
+    // 4. Close < SMA 20
+    table.cell(hud, 0, 4, "4. Close < SMA 20", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 4, cond_close_below_sma20 ? "✔ PASS" : "✘ FAIL", bgcolor=cond_close_below_sma20 ? color.new(color.green, 30) : color.new(color.red, 30), text_color=color.white, text_size=size.small)
+
+    // 5. Close < SMA 50
+    table.cell(hud, 0, 5, "5. Close < SMA 50", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 5, cond_close_below_sma50 ? "✔ PASS" : "✘ FAIL", bgcolor=cond_close_below_sma50 ? color.new(color.green, 30) : color.new(color.red, 30), text_color=color.white, text_size=size.small)
+
+    // Overall Signal on current bar
+    curr_ready = cond_red and cond_open_above_sma50 and cond_sma_alignment and cond_close_below_sma20 and cond_close_below_sma50
+    table.cell(hud, 0, 6, "Setup Trigger Ready", text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 6, curr_ready ? "🔥 ACTIVE" : "WAITING", bgcolor=curr_ready ? color.new(#D32F2F, 10) : color.new(color.gray, 60), text_color=color.white, text_size=size.small)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 6. ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+// alertcondition requires a const string (using built-in placeholders)
+alertcondition(signal_confirmed, title="Bearish SMA Breakdown Alert", 
+               message="NIFTY 1H BEARISH SMA BREAKDOWN! Candle High: {{high}}, Close: {{close}}")

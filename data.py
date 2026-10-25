@@ -14,6 +14,25 @@ from typing import Dict, List, Optional, Any
 from config import CONFIG, IST, now_ist, today_ist, log_data, log
 
 
+# ── TradingView-style hourly candles (verified on the live NSE:NIFTY 1H chart 2026-10-22) ──────
+# Kite's 60minute bars: 09:15, 10:15, 11:15, 12:15, 13:15, 14:15 (→15:15) and a short 15:15 (→15:30).
+# TradingView's NSE 1H chart has 6 bars/day and its last bar is Kite's 14:15–15:15 bar unchanged:
+# the 15:15–15:30 closing session (index flat, then the official close print) is NOT in any 1H bar.
+# So the 15:15 Kite bar is dropped and the SMAs run on the remaining 6 bars, exactly like the chart.
+LAST_BAR_START = dtime(14, 15)
+CLOSING_SESSION_START = dtime(15, 15)
+
+
+def candle_close_time(start: datetime) -> datetime:
+    """When the hourly candle that starts at `start` is complete (the 14:15 bar closes at 15:15)."""
+    return start + timedelta(minutes=CONFIG["candle_tf_minutes"])
+
+
+def drop_session_tail(candles: List[Dict]) -> List[Dict]:
+    """Remove Kite's 15:15–15:30 bars (closing session) — TradingView's 1H chart has no such bar."""
+    return [c for c in candles if c["date"].time() != CLOSING_SESSION_START]
+
+
 class DataManager:
     """Fetches and caches 1H NIFTY Spot candles, computes SMAs, and manages Spot LTP."""
 
@@ -51,16 +70,16 @@ class DataManager:
                     next_close = datetime.combine(
                         today, dtime(10, 15), tzinfo=IST
                     ) + timedelta(seconds=initial_wait_s)
+                elif last_start.time() >= LAST_BAR_START:
+                    # Today's last (14:15–15:15) bar is cached: nothing new until tomorrow 10:15.
+                    next_close = datetime.combine(
+                        today + timedelta(days=1), dtime(10, 15), tzinfo=IST
+                    ) + timedelta(seconds=initial_wait_s)
                 else:
-                    # Next candle starts at last_start + 1H, and closes at last_start + 2H
-                    # Exception: 14:15 candle starts at 14:15 and closes at 15:15
-                    if last_start.time() == dtime(14, 15):
-                        next_close = last_start + timedelta(minutes=60, seconds=initial_wait_s)
-                    else:
-                        next_close = last_start + timedelta(
-                            minutes=CONFIG["candle_tf_minutes"] * 2,
-                            seconds=initial_wait_s,
-                        )
+                    # The next candle starts 1H after the cached one and closes 1H later.
+                    next_close = candle_close_time(
+                        last_start + timedelta(minutes=CONFIG["candle_tf_minutes"])
+                    ) + timedelta(seconds=initial_wait_s)
 
                 if now < next_close:
                     if self._last_boundary_logged != next_close:
@@ -119,8 +138,8 @@ class DataManager:
                 )
 
                 if candles:
-                    # Drop the currently forming candle so cache contains ONLY completed bars
-                    completed = self._drop_incomplete_candle(candles)
+                    # TradingView-style 6 bars/day (15:15 bar dropped), then drop the forming candle
+                    completed = self._drop_incomplete_candle(drop_session_tail(candles))
                     if completed:
                         self._spot_candles = completed
                         self._calculate_sma()
@@ -145,8 +164,7 @@ class DataManager:
     def _drop_incomplete_candle(self, candles: List[Dict]) -> List[Dict]:
         """
         Drop the last candle if it belongs to the currently-forming window.
-        A 1H candle starting at 09:15 closes at 10:15.
-        The 15:15 candle closes at 15:30 (session end).
+        A 1H candle starting at 09:15 closes at 10:15; the last (14:15) candle closes at 15:15.
         """
         if not candles:
             return candles
@@ -158,10 +176,7 @@ class DataManager:
         else:
             last_candle_time = last_candle_time.astimezone(IST)
 
-        if last_candle_time.time() == dtime(15, 15):
-            candle_close = last_candle_time + timedelta(minutes=15)
-        else:
-            candle_close = last_candle_time + timedelta(minutes=CONFIG["candle_tf_minutes"])
+        candle_close = candle_close_time(last_candle_time)
 
         if now < candle_close:
             log_data.debug(

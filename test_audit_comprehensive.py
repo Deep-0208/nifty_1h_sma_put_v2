@@ -126,11 +126,11 @@ def _make_candle(o, h, l, c, sma_20=None, sma_50=None, dt=None):
 
 
 def test_signal_valid():
-    """T4: Valid bearish signal - red candle opening between 20 & 50 SMA and closing below both."""
+    """T4: Valid signal - SMA20 above SMA50, red candle opening between the SMAs and closing below both."""
     _section("Signal Tests")
     from pattern import detect_signal
     candle = _make_candle(o=24565, h=24575, l=24480, c=24500,
-                          sma_20=24550, sma_50=24580)
+                          sma_20=24580, sma_50=24550)
     result = detect_signal([candle])
     _test("Valid signal returns SetupSignal",
           result is not None,
@@ -147,7 +147,7 @@ def test_signal_green_candle():
     """T5: Green candle (close > open) - NO signal."""
     from pattern import detect_signal
     candle = _make_candle(o=24565, h=24620, l=24480, c=24570,
-                          sma_20=24550, sma_50=24580)
+                          sma_20=24580, sma_50=24550)
     result = detect_signal([candle])
     _test("Green candle -> None", result is None, f"got {result}")
 
@@ -155,8 +155,8 @@ def test_signal_green_candle():
 def test_signal_above_sma20():
     """T6: Red candle but close ABOVE SMA20 - NO signal."""
     from pattern import detect_signal
-    candle = _make_candle(o=24565, h=24620, l=24480, c=24560,
-                          sma_20=24550, sma_50=24580)
+    candle = _make_candle(o=24600, h=24620, l=24480, c=24590,
+                          sma_20=24580, sma_50=24550)
     result = detect_signal([candle])
     _test("Above SMA20 -> None", result is None, f"got {result}")
 
@@ -164,30 +164,30 @@ def test_signal_above_sma20():
 def test_signal_above_sma50():
     """T7: Red candle below SMA20 but ABOVE SMA50 - NO signal."""
     from pattern import detect_signal
-    candle = _make_candle(o=24565, h=24620, l=24480, c=24540,
-                          sma_20=24550, sma_50=24530)
+    candle = _make_candle(o=24600, h=24620, l=24480, c=24560,
+                          sma_20=24580, sma_50=24550)
     result = detect_signal([candle])
     _test("Above SMA50 -> None", result is None, f"got {result}")
 
 
 def test_signal_open_outside_smas():
-    """T7b: v2 rule - Open above both SMAs is VALID (bearish aligned); open at/below
-    SMA20 or inverted SMAs (sma_20 >= sma_50) are rejected."""
+    """T7b: v2 rule - Open above SMA50 (between the SMAs OR above both) is VALID;
+    open below SMA50 or SMA20 below SMA50 are rejected."""
     from pattern import detect_signal
-    # Open above both SMAs (o=24600 > sma_50=24580 > sma_20=24550), closes below both -> VALID
+    # Open above both SMAs (o=24600 > sma_20=24580 > sma_50=24550), closes below both -> VALID
     c_above = _make_candle(o=24600, h=24620, l=24480, c=24500,
-                           sma_20=24550, sma_50=24580)
-    _test("Open above both SMAs (bearish aligned) -> SIGNAL", detect_signal([c_above]) is not None)
+                           sma_20=24580, sma_50=24550)
+    _test("Open above both SMAs -> SIGNAL", detect_signal([c_above]) is not None)
 
-    # Open below SMA20 (o=24540 < sma_20=24550) -> rejected
+    # Open below SMA50 (o=24540 < sma_50=24550), red, closes below both -> rejected
     c_below = _make_candle(o=24540, h=24545, l=24480, c=24500,
-                           sma_20=24550, sma_50=24580)
-    _test("Open below SMA20 -> None", detect_signal([c_below]) is None)
+                           sma_20=24580, sma_50=24550)
+    _test("Open below SMA50 -> None", detect_signal([c_below]) is None)
 
-    # Inverted SMAs: sma_20 > sma_50 (not bearish aligned), open above SMA20, closes below both
+    # SMA20 below SMA50, open above both, closes below both -> rejected
     c_inverted = _make_candle(o=24600, h=24620, l=24480, c=24500,
-                              sma_20=24550, sma_50=24530)
-    _test("Inverted SMAs (sma_20 > sma_50) -> None", detect_signal([c_inverted]) is None)
+                              sma_20=24550, sma_50=24580)
+    _test("SMA20 below SMA50 -> None", detect_signal([c_inverted]) is None)
 
 
 def test_signal_missing_sma():
@@ -1025,9 +1025,9 @@ def test_config_values():
     _test("first_entry = 10:15",
           CONFIG["first_entry"].hour == 10 and
           CONFIG["first_entry"].minute == 15)
-    _test("last_entry = 15:15",
-          CONFIG["last_entry"].hour == 15 and
-          CONFIG["last_entry"].minute == 15)
+    _test("last_entry = 14:20 (13:15 bar decided at 14:15 + 5 min fetch grace)",
+          CONFIG["last_entry"].hour == 14 and
+          CONFIG["last_entry"].minute == 20)
 
 
 def test_monthly_rollover_20th_rule():
@@ -1125,7 +1125,7 @@ def test_data_manager_boundary_caching_and_drop_incomplete():
     try:
         data_mod.now_ist = lambda: datetime(2026, 8, 26, 10, 5, 0, tzinfo=IST)
         raw_candles = [
-            {"date": datetime(2026, 8, 25, 15, 15, tzinfo=IST), "close": 24200, "open": 24200, "high": 24200, "low": 24200},
+            {"date": datetime(2026, 8, 25, 14, 15, tzinfo=IST), "close": 24200, "open": 24200, "high": 24200, "low": 24200},
             {"date": datetime(2026, 8, 26, 9, 15, tzinfo=IST), "close": 24250, "open": 24200, "high": 24300, "low": 24200},
         ]
         completed = dm._drop_incomplete_candle(raw_candles)
@@ -1145,14 +1145,14 @@ def test_data_manager_boundary_caching_and_drop_incomplete():
         completed = dm._drop_incomplete_candle(raw_1515)
         _test("_drop_incomplete_candle drops 15:15 bar at 15:20", len(completed) == 1 and completed[-1]["date"].time() == dtime(14, 15))
 
-        # 15:15 candle evaluated at 15:30:05 (completed) -> kept
-        data_mod.now_ist = lambda: datetime(2026, 8, 26, 15, 30, 5, tzinfo=IST)
-        completed = dm._drop_incomplete_candle(raw_1515)
-        _test("_drop_incomplete_candle keeps 15:15 bar at 15:30:05", len(completed) == 2 and completed[-1]["date"].time() == dtime(15, 15))
+        # Kite's 15:15 bar never reaches the cache: TradingView has no 15:15–15:30 1H bar
+        from data import drop_session_tail
+        _test("drop_session_tail removes the 15:15 bar, keeps 14:15",
+              [c["date"].time() for c in drop_session_tail(raw_1515)] == [dtime(14, 15)])
 
         # 2. Test Boundary Caching
         mock_kite = MockKite([
-            {"date": datetime(2026, 8, 25, 15, 15, tzinfo=IST), "close": 24200, "open": 24200, "high": 24200, "low": 24200},
+            {"date": datetime(2026, 8, 25, 14, 15, tzinfo=IST), "close": 24200, "open": 24200, "high": 24200, "low": 24200},
         ])
         dm_cache = DataManager(mock_kite)
         
@@ -1174,7 +1174,7 @@ def test_data_manager_boundary_caching_and_drop_incomplete():
 
         # At 10:15:04 IST -> Cache EXPIRED, Kite API is called
         mock_kite._candles = [
-            {"date": datetime(2026, 8, 25, 15, 15, tzinfo=IST), "close": 24200, "open": 24200, "high": 24200, "low": 24200},
+            {"date": datetime(2026, 8, 25, 14, 15, tzinfo=IST), "close": 24200, "open": 24200, "high": 24200, "low": 24200},
             {"date": datetime(2026, 8, 26, 9, 15, tzinfo=IST), "close": 24250, "open": 24200, "high": 24300, "low": 24200},
             {"date": datetime(2026, 8, 26, 10, 15, tzinfo=IST), "close": 24260, "open": 24250, "high": 24270, "low": 24240},
         ]
@@ -1191,6 +1191,89 @@ def test_data_manager_boundary_caching_and_drop_incomplete():
     finally:
         data_mod.now_ist = orig_now
         data_mod.today_ist = today_ist
+
+
+def test_tradingview_six_bars_per_day():
+    """T13b: TradingView NSE 1H = 6 bars/day — the last bar is Kite's 14:15–15:15 bar unchanged and the
+    15:15–15:30 closing session is in no 1H bar, so Kite's 15:15 bar is dropped (live chart check 2026-10-22)."""
+    _section("TradingView 6-Bar Candle Tests")
+    from data import DataManager, drop_session_tail, candle_close_time
+    import data as data_mod
+
+    def bar(day, hh, mm, o, h, l, c, v=100):
+        return {"date": datetime(2026, 10, day, hh, mm, tzinfo=IST), "open": o, "high": h, "low": l,
+                "close": c, "volume": v}
+
+    def kite_day(day, base):
+        """Kite's 7 bars for one day; the 15:15 bar carries the closing-session jump."""
+        return [bar(day, 9, 15, base, base + 5, base - 5, base + 1), bar(day, 10, 15, base + 1, base + 6, base - 4, base + 2),
+                bar(day, 11, 15, base + 2, base + 7, base - 3, base + 3), bar(day, 12, 15, base + 3, base + 8, base - 2, base + 4),
+                bar(day, 13, 15, base + 4, base + 9, base - 1, base + 5), bar(day, 14, 15, base + 5, base + 10, base, base + 6),
+                bar(day, 15, 15, base + 6, base + 20, base + 6, base + 20, v=40)]
+
+    out = drop_session_tail(kite_day(12, 100))
+    _test("15:15 bar dropped: 6 bars 09:15..14:15",
+          [c["date"].strftime("%H:%M") for c in out] == ["09:15", "10:15", "11:15", "12:15", "13:15", "14:15"])
+    last = out[-1]
+    _test("14:15 bar kept unchanged (no closing-session high/close)",
+          (last["open"], last["high"], last["low"], last["close"]) == (105, 110, 100, 106),
+          f"got {(last['open'], last['high'], last['low'], last['close'])}")
+
+    _test("13:15 bar closes 14:15", candle_close_time(bar(12, 13, 15, 1, 1, 1, 1)["date"]).strftime("%H:%M") == "14:15")
+    _test("14:15 bar closes 15:15", candle_close_time(bar(12, 14, 15, 1, 1, 1, 1)["date"]).strftime("%H:%M") == "15:15")
+
+    orig_now, orig_today = data_mod.now_ist, data_mod.today_ist
+    try:
+        dm = DataManager(None)
+        day = drop_session_tail(kite_day(12, 100))
+        data_mod.now_ist = lambda: datetime(2026, 10, 12, 15, 10, tzinfo=IST)
+        _test("14:15 bar still forming at 15:10 -> dropped",
+              dm._drop_incomplete_candle(day)[-1]["date"].strftime("%H:%M") == "13:15")
+        data_mod.now_ist = lambda: datetime(2026, 10, 12, 15, 15, 5, tzinfo=IST)
+        _test("14:15 bar complete at 15:15:05 -> kept",
+              dm._drop_incomplete_candle(day)[-1]["date"].strftime("%H:%M") == "14:15")
+
+        class MockKite:
+            def __init__(self, candles):
+                self._candles = candles
+                self.api_calls = 0
+
+            def historical_data(self, *args, **kwargs):
+                self.api_calls += 1
+                return list(self._candles)
+
+        kite_bars = []
+        for i, d in enumerate((1, 5, 6, 7, 8, 9, 12, 13, 14)):           # 9 days x 7 Kite bars
+            kite_bars += kite_day(d, 100 + 10 * i)
+        mk = MockKite(kite_bars)
+        dm2 = DataManager(mk)
+        data_mod.now_ist = lambda: datetime(2026, 10, 14, 15, 40, tzinfo=IST)
+        data_mod.today_ist = lambda: date(2026, 10, 14)
+        candles = dm2.fetch_spot_candles(force_refresh=True)
+        _test("fetch_spot_candles returns 9 x 6 = 54 bars (not 63)", len(candles) == 54, f"got {len(candles)}")
+        _test("No 15:15 bar in the series", all(c["date"].strftime("%H:%M") != "15:15" for c in candles))
+        closes = [c["close"] for c in drop_session_tail(kite_bars)]
+        _test("SMA20 on the 6-bar series", abs(candles[-1]["sma_20"] - sum(closes[-20:]) / 20) < 1e-9)
+        _test("SMA50 on the 6-bar series", abs(candles[-1]["sma_50"] - sum(closes[-50:]) / 50) < 1e-9)
+
+        # 14:15 bar cached after 15:15 -> no refetch the same evening
+        data_mod.now_ist = lambda: datetime(2026, 10, 14, 23, 0, tzinfo=IST)
+        dm2.fetch_spot_candles()
+        _test("After the 14:15 bar is cached, no refetch the same evening", mk.api_calls == 1)
+
+        # 13:15 bar cached at 14:15 -> refetch only once 15:15 has passed
+        dm3 = DataManager(MockKite([]))
+        dm3._spot_candles = [bar(12, 13, 15, 1, 1, 1, 1)]
+        data_mod.today_ist = lambda: date(2026, 10, 12)
+        data_mod.now_ist = lambda: datetime(2026, 10, 12, 15, 10, tzinfo=IST)
+        dm3.fetch_spot_candles()
+        _test("No refetch before 15:15 (14:15 bar still forming)", dm3.kite.api_calls == 0)
+        data_mod.now_ist = lambda: datetime(2026, 10, 12, 15, 15, 5, tzinfo=IST)
+        dm3.fetch_spot_candles()
+        _test("Refetch at 15:15:05 for the completed 14:15 bar", dm3.kite.api_calls == 1)
+    finally:
+        data_mod.now_ist = orig_now
+        data_mod.today_ist = orig_today
 
 
 def test_order_manager_product_type_parity():
@@ -1385,6 +1468,7 @@ if __name__ == "__main__":
 
     # 13. DataManager Boundary Caching & Candle Drop Tests (8 assertions)
     test_data_manager_boundary_caching_and_drop_incomplete()
+    test_tradingview_six_bars_per_day()
 
     # 14. OrderManager Product Type Parity Tests (2 assertions)
     test_order_manager_product_type_parity()
