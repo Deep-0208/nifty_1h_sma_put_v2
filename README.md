@@ -24,7 +24,7 @@
 
 ## Strategy Overview
 
-This bot implements an institutional **1-Hour SMA Breakdown Strategy (v2)** on the **NIFTY 50 spot index**. When a completed 1-hour candle satisfies the bearish breakdown criteria (20-period SMA above the 50-period SMA, red candle opening above SMA 50 and closing below both SMAs), it automatically buys the **ATM (At-The-Money) Monthly PUT option** as a **Positional (`NRML`)** trade, carrying it overnight and managing exit triggers strictly via **Spot-Level Stop Loss and Target levels**.
+This bot implements an institutional **1-Hour SMA Breakdown Strategy (v2)** on the **NIFTY 50 spot index**. When a completed 1-hour candle satisfies the bearish breakdown criteria (20-period SMA below the 50-period SMA for bearish moving average alignment, red candle opening above SMA 20 and closing below both SMAs), it automatically buys the **ATM (At-The-Money) Monthly PUT option** as a **Positional (`NRML`)** trade, carrying it overnight and managing exit triggers strictly via **Spot-Level Stop Loss and Target levels**.
 
 ### How It Works
 
@@ -39,8 +39,8 @@ Exit Triggers:   Live NIFTY Spot WebSocket LTP (Token 256265)        →  Spot S
 | Condition | Rule |
 |-----------|------|
 | **Candle Color** | Must be **red / bearish** (`Close < Open`) |
-| **SMA Alignment** | `SMA(20) > SMA(50)` |
-| **Open Above SMA 50** | `Open > SMA(50)` — between the SMAs or above both; open below SMA 50 = skip |
+| **SMA Alignment** | `SMA(20) < SMA(50)` (bearish moving average alignment) |
+| **Open Above SMA 20** | `Open > SMA(20)` — between the SMAs or above both; open below SMA 20 = skip |
 | **SMA 20 Breakdown** | Completed candle `Close < SMA(20)` |
 | **SMA 50 Breakdown** | Completed candle `Close < SMA(50)` |
 | **Execution** | Trade entered at next bar open — Buy ATM Monthly PUT (`NRML`) |

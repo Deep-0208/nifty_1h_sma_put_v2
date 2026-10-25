@@ -126,11 +126,11 @@ def _make_candle(o, h, l, c, sma_20=None, sma_50=None, dt=None):
 
 
 def test_signal_valid():
-    """T4: Valid signal - SMA20 above SMA50, red candle opening between the SMAs and closing below both."""
+    """T4: Valid signal - SMA20 below SMA50 (bearish), red candle opening between the SMAs and closing below both."""
     _section("Signal Tests")
     from pattern import detect_signal
     candle = _make_candle(o=24565, h=24575, l=24480, c=24500,
-                          sma_20=24580, sma_50=24550)
+                          sma_20=24550, sma_50=24580)
     result = detect_signal([candle])
     _test("Valid signal returns SetupSignal",
           result is not None,
@@ -147,7 +147,7 @@ def test_signal_green_candle():
     """T5: Green candle (close > open) - NO signal."""
     from pattern import detect_signal
     candle = _make_candle(o=24565, h=24620, l=24480, c=24570,
-                          sma_20=24580, sma_50=24550)
+                          sma_20=24550, sma_50=24580)
     result = detect_signal([candle])
     _test("Green candle -> None", result is None, f"got {result}")
 
@@ -155,39 +155,39 @@ def test_signal_green_candle():
 def test_signal_above_sma20():
     """T6: Red candle but close ABOVE SMA20 - NO signal."""
     from pattern import detect_signal
-    candle = _make_candle(o=24600, h=24620, l=24480, c=24590,
-                          sma_20=24580, sma_50=24550)
+    candle = _make_candle(o=24600, h=24620, l=24480, c=24560,
+                          sma_20=24550, sma_50=24580)
     result = detect_signal([candle])
     _test("Above SMA20 -> None", result is None, f"got {result}")
 
 
 def test_signal_above_sma50():
-    """T7: Red candle below SMA20 but ABOVE SMA50 - NO signal."""
+    """T7: Red candle below SMA50 but ABOVE SMA20 - NO signal."""
     from pattern import detect_signal
     candle = _make_candle(o=24600, h=24620, l=24480, c=24560,
-                          sma_20=24580, sma_50=24550)
+                          sma_20=24550, sma_50=24580)
     result = detect_signal([candle])
-    _test("Above SMA50 -> None", result is None, f"got {result}")
+    _test("Above SMA20 -> None", result is None, f"got {result}")
 
 
 def test_signal_open_outside_smas():
-    """T7b: v2 rule - Open above SMA50 (between the SMAs OR above both) is VALID;
-    open below SMA50 or SMA20 below SMA50 are rejected."""
+    """T7b: v2 rule - Open above SMA20 (between the SMAs OR above both) is VALID;
+    open below SMA20 or SMA20 above SMA50 are rejected."""
     from pattern import detect_signal
-    # Open above both SMAs (o=24600 > sma_20=24580 > sma_50=24550), closes below both -> VALID
+    # Open above both SMAs (o=24600 > sma_50=24580 > sma_20=24550), closes below both -> VALID
     c_above = _make_candle(o=24600, h=24620, l=24480, c=24500,
-                           sma_20=24580, sma_50=24550)
+                           sma_20=24550, sma_50=24580)
     _test("Open above both SMAs -> SIGNAL", detect_signal([c_above]) is not None)
 
-    # Open below SMA50 (o=24540 < sma_50=24550), red, closes below both -> rejected
+    # Open below SMA20 (o=24540 < sma_20=24550), red, closes below both -> rejected
     c_below = _make_candle(o=24540, h=24545, l=24480, c=24500,
-                           sma_20=24580, sma_50=24550)
-    _test("Open below SMA50 -> None", detect_signal([c_below]) is None)
+                           sma_20=24550, sma_50=24580)
+    _test("Open below SMA20 -> None", detect_signal([c_below]) is None)
 
-    # SMA20 below SMA50, open above both, closes below both -> rejected
+    # SMA20 above SMA50 (bullish alignment), open above both, closes below both -> rejected
     c_inverted = _make_candle(o=24600, h=24620, l=24480, c=24500,
-                              sma_20=24550, sma_50=24580)
-    _test("SMA20 below SMA50 -> None", detect_signal([c_inverted]) is None)
+                              sma_20=24580, sma_50=24550)
+    _test("SMA20 above SMA50 -> None", detect_signal([c_inverted]) is None)
 
 
 def test_signal_missing_sma():
