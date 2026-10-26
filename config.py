@@ -1,7 +1,13 @@
 """
-config.py - NIFTY 1-Hour SMA PUT Strategy v2
-All strategy parameters and multi-channel logging setup.
-No strategy logic lives here.
+═════════════════════════════════════════════════════════════
+  ⚠️ STATUS: DISABLED & ARCHIVED (DO NOT RUN IN PRODUCTION)
+  CONFIGURATION — NIFTY 1-Hour SMA PUT Strategy (v2)
+═════════════════════════════════════════════════════════════
+
+This strategy (v2) has been retired and disabled to prevent duplicate
+execution on the broker account.
+All verified 5-condition breakdown rules have been unified
+into NIFTY 1-Hour SMA PUT Strategy (`nifty_1h_sma_put` / `strat-n1h`).
 """
 
 import os

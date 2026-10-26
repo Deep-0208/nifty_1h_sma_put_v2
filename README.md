@@ -1,5 +1,13 @@
+> [!WARNING]
+> ### 🛑 STATUS: DISABLED & ARCHIVED (DO NOT RUN)
+> **This standalone strategy (v2) is permanently DISABLED to prevent confusion and duplicate execution.**
+> All verified 5-condition breakdown rules (SMA 20 < SMA 50 alignment + Open > SMA 20 filter) have been unified into **NIFTY 1-Hour SMA PUT Strategy (`nifty_1h_sma_put` / `strat-n1h`)**.
+> Do **NOT** run this bot in production. Use `nifty_1h_sma_put` instead.
+
+---
+
 <p align="center">
-  <h1 align="center">📈 NIFTY 1-Hour SMA PUT Strategy v2</h1>
+  <h1 align="center">📈 NIFTY 1-Hour SMA PUT Strategy v2 [ARCHIVED]</h1>
   <p align="center">
     <strong>A production-grade, fully automated positional (carryforward) algorithmic trading bot for NIFTY 50 options (v2)</strong>
   </p>

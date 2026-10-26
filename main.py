@@ -713,4 +713,9 @@ def main():
 
 
 if __name__ == "__main__":
+    print(
+        "⚠️ [STATUS: DISABLED & ARCHIVED] nifty_1h_sma_put_v2 is retired.\n"
+        "   Use nifty_1h_sma_put (v1 / strat-n1h) instead to prevent duplicate execution."
+    )
+    sys.exit(0)
     main()
